@@ -1,0 +1,30 @@
+plugins {
+    id 'org.springframework.boot' version '3.3.5'
+    id 'java'
+}
+
+group = 'com.example'
+version = '1.0.0-SNAPSHOT'
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+dependencies {
+    implementation 'com.autolimit:autolimit:1.0.0-SNAPSHOT'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
