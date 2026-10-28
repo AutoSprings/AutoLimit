@@ -1,0 +1,4 @@
+rootProject.name = 'autoauth-autolimit-example'
+includeBuild('../..')
+// By default, check out AutoAuth next to AutoLimit. Override for other layouts.
+includeBuild(providers.gradleProperty('autoauthDir').getOrElse('../../../AutoAuth'))
