@@ -1,5 +1,7 @@
 package com.autolimit.filter;
 
+import com.autolimit.identity.ClientIpResolver;
+import com.autolimit.identity.TrustedProxyClientIpResolver;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import jakarta.servlet.FilterChain;
@@ -12,14 +14,19 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class IpRateLimitFilter extends OncePerRequestFilter {
 
     private final int maxRequestsPerWindow;
     private final Cache<String, AtomicInteger> ipRequestCounts;
+    private final ClientIpResolver clientIpResolver;
 
-    public IpRateLimitFilter(int maxRequestsPerSecond) {
+    public IpRateLimitFilter(int maxRequestsPerSecond, ClientIpResolver clientIpResolver) {
+
+        this.clientIpResolver = clientIpResolver;
+
         this.maxRequestsPerWindow = maxRequestsPerSecond;
 
         this.ipRequestCounts = Caffeine.newBuilder()
@@ -28,6 +35,13 @@ public class IpRateLimitFilter extends OncePerRequestFilter {
                 .build();
     }
 
+
+    public IpRateLimitFilter(int maxRequestsPerSecond) {
+        this (
+                maxRequestsPerSecond,
+                new TrustedProxyClientIpResolver(List.of(), 8192, 32)
+        );
+    }
     public IpRateLimitFilter() {
         this(50);
     }
