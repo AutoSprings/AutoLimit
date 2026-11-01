@@ -17,7 +17,7 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
     private static final String HEADER = "X-Forwarded-For";
 
     private final List<IpRange> trustedProxies; // needs ip range
-    private final int maxHeadersChars;
+    private final int maxHeaderChars;
     private final int maxHops;
 
     private final String cacheAttribute =
@@ -41,7 +41,7 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
                 .map(IpRange::parse)
                 .toList();
 
-        this.maxHeadersChars = maxHeadersChars;
+        this.maxHeaderChars = maxHeadersChars;
         this.maxHops = maxHops;
 
     }
