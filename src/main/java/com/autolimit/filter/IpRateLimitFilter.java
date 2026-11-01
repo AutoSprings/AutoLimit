@@ -11,6 +11,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -51,7 +52,14 @@ public class IpRateLimitFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
 
-        String clientIp = resolveClientIp(request);
+        String clientIp;
+
+        try {
+            clientIp = clientIpResolver.resolve(request);
+        } catch (ResponseStatusException exception) {
+            response.sendError(exception.getStatusCode().value(), "Invalid Client IP");
+            return;
+        }
 
         AtomicInteger counter = ipRequestCounts.get(clientIp, k -> new AtomicInteger(0));
 
