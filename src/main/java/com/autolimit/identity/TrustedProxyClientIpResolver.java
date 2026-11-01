@@ -94,4 +94,29 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
         );
 
     }
+
+    private record IpRange(byte[] network, int prefixLength) {
+
+        static IpRange parse(String value) {
+
+            if (value == null || value.isBlank()) {
+
+                throw new IllegalArgumentException("Proxy entry cannot be blank");
+
+            }
+
+            // Split CIDR and IP
+            String[] parts = value.trim().split("/", -1);
+
+            if (parts.length > 2) {
+                throw new IllegalArgumentException("Invalid proxy CIDR");
+            }
+
+            byte[] address = literalAddress(parts[0]).getAddress();
+            int prefix = address.length * 8;
+
+            return new IpRange(address, prefix);
+        }
+
+    }
 }
