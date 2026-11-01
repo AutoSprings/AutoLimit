@@ -74,7 +74,9 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
 
         }
 
-        return "";
+        String address = InetAddresses.toAddrString(client);
+        request.setAttribute(cacheAttribute, address);
+        return address;
     }
 
     private static InetAddress requestAddress(String value) {
