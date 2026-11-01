@@ -178,7 +178,20 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
             }
 
             byte[] address = literalAddress(parts[0]).getAddress();
+            int addressBits = address.length * 8;
             int prefix = address.length * 8;
+
+            if (parts.length == 2) {
+                if (!parts[1].matches("[0-9]{1,3}")) {
+                    throw new IllegalArgumentException("Invalid proxy prefix");
+                }
+
+                prefix = Integer.parseInt(parts[1]);
+            }
+
+            if (prefix < 0 || prefix > addressBits) {
+                throw new IllegalArgumentException("Trusted proxy prefix is out of range");
+            }
 
             return new IpRange(address, prefix);
         }
@@ -187,13 +200,18 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
 
             byte[] address = candidate.getAddress();
 
+            // checks if IPv4 or IPv6 subnet cant be part of both
             if (address.length != network.length){
                 return false;
             }
 
+            // 8 bit bytes that must match
             int fullBytes = prefixLength / 8;
+
+            // left over 7 bits
             int remainingBits = prefixLength % 8;
 
+            // if any bytes dont match return false
             for (int i = 0; i < fullBytes; i++){
 
                 if (address[i] != network[i]) {
@@ -202,12 +220,15 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
 
             }
 
+            // all match none remaining its in verified subnet
             if (remainingBits == 0) {
                 return true;
             }
 
+            // Create the bit mask
             int mask = (0xff << (8 - remainingBits)) & 0xff;
 
+            // if address + mask and the network match in subnet, mask zeroes out host bits
             return (address[fullBytes] & mask) == (network[fullBytes] & mask);
 
         }
