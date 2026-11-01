@@ -16,7 +16,7 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
 
     private static final String HEADER = "X-Forwarded-For";
 
-    private final List<> trustedProxies; // needs ip range
+    private final List<IpRange> trustedProxies; // needs ip range
     private final int maxHeadersChars;
     private final int maxHops;
 
@@ -67,8 +67,31 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
         try {
             return literalAddress(value);
         } catch (IllegalArgumentException exception) {
+            // Dont pass through proxy IP
             throw invalidRequest();
         }
+
+    }
+
+    private static InetAddress literalAddress(String value) {
+
+        if (value == null || value.isBlank() || value.contains("%")) {
+
+            throw new IllegalArgumentException("Expected IP literal");
+
+        }
+
+        // remove host name, port, brackets, format ipv6 properly
+        return InetAddresses.forString(value);
+
+    }
+
+    private static ResponseStatusException invalidRequest() {
+
+        return new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Invalid client address information"
+        );
 
     }
 }
