@@ -1,5 +1,7 @@
 package com.autolimit.filter;
 
+import com.autolimit.identity.ClientIpResolver;
+import com.autolimit.identity.TrustedProxyClientIpResolver;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import jakarta.servlet.FilterChain;
@@ -9,17 +11,23 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class IpRateLimitFilter extends OncePerRequestFilter {
 
     private final int maxRequestsPerWindow;
     private final Cache<String, AtomicInteger> ipRequestCounts;
+    private final ClientIpResolver clientIpResolver;
 
-    public IpRateLimitFilter(int maxRequestsPerSecond) {
+    public IpRateLimitFilter(int maxRequestsPerSecond, ClientIpResolver clientIpResolver) {
+
+        this.clientIpResolver = clientIpResolver;
+
         this.maxRequestsPerWindow = maxRequestsPerSecond;
 
         this.ipRequestCounts = Caffeine.newBuilder()
@@ -28,6 +36,13 @@ public class IpRateLimitFilter extends OncePerRequestFilter {
                 .build();
     }
 
+
+    public IpRateLimitFilter(int maxRequestsPerSecond) {
+        this (
+                maxRequestsPerSecond,
+                new TrustedProxyClientIpResolver(List.of(), 8192, 32)
+        );
+    }
     public IpRateLimitFilter() {
         this(50);
     }
@@ -37,7 +52,14 @@ public class IpRateLimitFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
 
-        String clientIp = resolveClientIp(request);
+        String clientIp;
+
+        try {
+            clientIp = clientIpResolver.resolve(request);
+        } catch (ResponseStatusException exception) {
+            response.sendError(exception.getStatusCode().value(), "Invalid Client IP");
+            return;
+        }
 
         AtomicInteger counter = ipRequestCounts.get(clientIp, k -> new AtomicInteger(0));
 

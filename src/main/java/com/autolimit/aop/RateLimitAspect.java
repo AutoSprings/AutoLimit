@@ -3,6 +3,7 @@ package com.autolimit.aop;
 import com.autolimit.annotation.RateLimit;
 import com.autolimit.annotation.UserQuota;
 import com.autolimit.exception.RateLimitExceededException;
+import com.autolimit.identity.ClientIpResolver;
 import com.autolimit.ratelimit.RateLimitService;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,11 +32,14 @@ public class RateLimitAspect {
 
     private final RateLimitService rateLimitService;
     private final CallerIdentityResolver identityResolver;
+    private final ClientIpResolver clientIpResolver;
 
     public RateLimitAspect(RateLimitService rateLimitService,
-                           CallerIdentityResolver identityResolver) {
+                           CallerIdentityResolver identityResolver,
+                           ClientIpResolver clientIpResolver) {
         this.rateLimitService = rateLimitService;
         this.identityResolver = identityResolver;
+        this.clientIpResolver = clientIpResolver;
     }
 
     /**
@@ -94,15 +98,12 @@ public class RateLimitAspect {
 
         // limit based on IP if no user is found
         } else {
-            ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-            if (attributes != null) {
-                HttpServletRequest request = attributes.getRequest();
-                String ip = request.getHeader("X-Forwarded-For");
-                if (ip == null || ip.isBlank()) {
-                    ip = request.getRemoteAddr();
-                } else {
-                    ip = ip.split(",")[0].trim();
-                }
+            var attributes = RequestContextHolder.getRequestAttributes();
+
+            if (attributes instanceof ServletRequestAttributes servletAttributes) {
+                String ip = clientIpResolver.resolve(
+                        servletAttributes.getRequest());
+
                 callerKey = "ip:" + ip;
             } else {
                 callerKey = "ip:unknown";

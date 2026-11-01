@@ -20,7 +20,8 @@ import static org.mockito.Mockito.*;
 
 @SpringBootTest(classes = IntegrationApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "autolimit.pre-auth-rate-limit=1")
+        properties = {"autolimit.pre-auth-rate-limit=1", "autolimit.trusted-proxies[0]=127.0.0.1",
+                "autolimit.trusted-proxies[1]=::1"})
 class EarlyIpOrderingTest {
     @Autowired TestRestTemplate http;
     @Autowired JwtGenerator tokens;

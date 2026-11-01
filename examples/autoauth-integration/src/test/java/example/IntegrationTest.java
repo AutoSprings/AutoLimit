@@ -3,6 +3,7 @@ package example;
 import com.autoauth.jwt.JwtGenerator;
 import com.autoauth.model.AutoAuthUser;
 import com.autolimit.filter.IpRateLimitFilter;
+import com.autolimit.identity.ClientIpResolver;
 import com.autolimit.ratelimit.RateLimitService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletContext;
@@ -34,7 +35,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 @SpringBootTest(classes = {IntegrationApplication.class, IntegrationTest.Filters.class},
-        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = {"autolimit.trusted-proxies[0]=127.0.0.1", "autolimit.trusted-proxies[1]=::1"})
 class IntegrationTest {
     @Autowired TestRestTemplate http;
     @Autowired JwtGenerator tokens;
@@ -101,13 +103,13 @@ class IntegrationTest {
 
     @TestConfiguration(proxyBeanMethods = false)
     static class Filters {
-        @Bean CountingIpFilter countingIpFilter() { return new CountingIpFilter(); }
+        @Bean CountingIpFilter countingIpFilter(ClientIpResolver resolver) { return new CountingIpFilter(resolver); }
     }
 
     static class CountingIpFilter extends IpRateLimitFilter {
         final AtomicInteger invocations = new AtomicInteger();
         final AtomicInteger authenticatedAtEntry = new AtomicInteger();
-        CountingIpFilter() { super(500); }
+        CountingIpFilter(ClientIpResolver resolver) { super(500, resolver); }
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
                 throws ServletException, IOException {

@@ -7,6 +7,10 @@ import com.autolimit.exception.AutoLimitRateLimitExceptionResolver;
 import com.autolimit.filter.IpRateLimitFilter;
 import com.autolimit.identity.CallerIdentity;
 import com.autolimit.identity.CallerIdentityResolver;
+import com.autolimit.identity.TrustedProxyClientIpResolver;
+import com.autolimit.identity.ClientIpResolver;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import com.autolimit.ratelimit.RateLimitService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -68,6 +72,47 @@ class AutoLimitConfigurationTest {
         });
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void forgedHeadersCannotResetAnonymousEndpointQuota(boolean trustedProxy) {
+        runner.withPropertyValues("autolimit.trusted-proxies[0]=10.0.0.0/24").run(context -> {
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).build();
+            String peer = trustedProxy ? "10.0.0.2" : "203.0.113.20";
+            String suffix = trustedProxy ? ",203.0.113.20,10.0.0.1" : "";
+            mvc.perform(get("/limited").header("X-Forwarded-For", "198.51.100.1" + suffix)
+                    .with(request -> { request.setRemoteAddr(peer); return request; }))
+                    .andExpect(status().isOk());
+            mvc.perform(get("/limited").header("X-Forwarded-For", "198.51.100.2" + suffix)
+                    .with(request -> { request.setRemoteAddr(peer); return request; }))
+                    .andExpect(status().isTooManyRequests());
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"autolimit.trusted-proxies[0]=localhost", "autolimit.trusted-proxies[0]=10.0.0.1/33",
+            "autolimit.max-forwarded-header-chars=0", "autolimit.max-forwarded-header-chars=-1",
+            "autolimit.max-forwarded-hops=0", "autolimit.max-forwarded-hops=-1"})
+    void invalidProxyConfigurationFailsStartup(String property) {
+        runner.withPropertyValues(property).run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void bindsProxyConfigurationAndRespectsCustomClientIpResolver() {
+        runner.withPropertyValues("autolimit.trusted-proxies[0]=10.0.0.0/24",
+                "autolimit.max-forwarded-header-chars=100", "autolimit.max-forwarded-hops=3").run(context -> {
+            var properties = context.getBean(AutoLimitProperties.class);
+            assertThat(properties.getTrustedProxies()).containsExactly("10.0.0.0/24");
+            assertThat(properties.getMaxForwardedHeaderChars()).isEqualTo(100);
+            assertThat(properties.getMaxForwardedHops()).isEqualTo(3);
+            assertThat(context).hasSingleBean(ClientIpResolver.class);
+        });
+        ClientIpResolver custom = request -> "203.0.113.20";
+        runner.withBean(ClientIpResolver.class, () -> custom).run(context -> {
+            assertThat(context).hasSingleBean(ClientIpResolver.class);
+            assertThat(context.getBean(ClientIpResolver.class)).isSameAs(custom);
+        });
+    }
+
     @Test
     void applicationResolverUsesActualUserIdsAndHighestMatchingRoleQuota() {
         AtomicReference<CallerIdentity> caller = new AtomicReference<>(new CallerIdentity("alice", List.of("premium")));
@@ -91,7 +136,8 @@ class AutoLimitConfigurationTest {
     void respectsApplicationProvidedServiceAspectResolverHandlerAndFilter() {
         RateLimitService limiter = new RateLimitService();
         CallerIdentityResolver resolver = Optional::empty;
-        RateLimitAspect aspect = new RateLimitAspect(limiter, resolver);
+        RateLimitAspect aspect = new RateLimitAspect(limiter, resolver,
+                new TrustedProxyClientIpResolver(List.of(), 8192, 32));
         AutoLimitRateLimitExceptionResolver handler = new AutoLimitRateLimitExceptionResolver();
         IpRateLimitFilter filter = new IpRateLimitFilter(4);
         runner.withBean(RateLimitService.class, () -> limiter).withBean(CallerIdentityResolver.class, () -> resolver)

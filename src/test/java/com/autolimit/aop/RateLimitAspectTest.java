@@ -6,6 +6,7 @@ import com.autolimit.exception.RateLimitExceededException;
 import com.autolimit.ratelimit.RateLimitService;
 import com.autolimit.identity.CallerIdentity;
 import com.autolimit.identity.CallerIdentityResolver;
+import com.autolimit.identity.TrustedProxyClientIpResolver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,7 +31,8 @@ class RateLimitAspectTest {
     void setUp() {
         when(identityResolver.resolve()).thenReturn(Optional.empty());
         AspectJProxyFactory factory = new AspectJProxyFactory(new LimitedService());
-        factory.addAspect(new RateLimitAspect(limiter, identityResolver));
+        factory.addAspect(new RateLimitAspect(limiter, identityResolver,
+                new TrustedProxyClientIpResolver(List.of(), 8192, 32)));
         service = factory.getProxy();
     }
 
@@ -78,13 +80,14 @@ class RateLimitAspectTest {
     }
 
     @Test
-    void anonymousRequestsUseFirstForwardedIp() {
+    void anonymousRequestsIgnoreUntrustedForwardedIp() {
         MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRemoteAddr("198.51.100.20");
         request.addHeader("X-Forwarded-For", "203.0.113.10, 10.0.0.1");
         RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
-        when(limiter.isAllowed("ip:203.0.113.10:tiered", 2, 30_000)).thenReturn(true);
+        when(limiter.isAllowed("ip:198.51.100.20:tiered", 2, 30_000)).thenReturn(true);
         service.tiered();
-        verify(limiter).isAllowed("ip:203.0.113.10:tiered", 2, 30_000);
+        verify(limiter).isAllowed("ip:198.51.100.20:tiered", 2, 30_000);
     }
 
     @Test
