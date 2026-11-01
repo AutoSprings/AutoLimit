@@ -58,6 +58,21 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
         }
 
         InetAddress peer = requestAddress(request.getRemoteAddr());
+        InetAddress client = peer;
+
+        if (isTrusted(peer)) {
+
+            List<InetAddress> chain = readForwardedChain(request);
+
+            for (int i = chain.size() -1; i >= 0; i--) {
+                if (!isTrusted(client)) {
+                    break;
+                }
+
+                client = chain.get(i);
+            }
+
+        }
 
         return "";
     }
@@ -119,4 +134,55 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
         }
 
     }
+
+    private boolean isTrusted(InetAddress address) {
+
+        return trustedProxies.stream()
+                .anyMatch(range -> range.contains(address));
+
+    }
+
+    private List<InetAddress> readForwardedChain(HttpServletRequest request) {
+
+        List<InetAddress> addresses = new ArrayList<>();
+        Enumeration<String> headers = request.getHeaders(HEADER);
+
+        int totalChars = 0;
+        boolean firstField = true;
+
+        while (headers != null && headers.hasMoreElements()) {
+
+            String field = headers.nextElement();
+
+            if (!firstField) {
+                if (totalChars == maxHeaderChars) {
+                    throw invalidRequest();
+                }
+
+                totalChars++;
+            }
+
+            firstField = false;
+
+            if (field == null || field.length() > maxHeaderChars - totalChars) {
+                throw invalidRequest();
+            }
+
+            totalChars += field.length();
+
+            for (String entry : field.split(",", -1)){
+
+                if (addresses.size() == maxHops) {
+                    throw invalidRequest();
+                }
+
+                addresses.add(requestAddress(entry.trim()));
+            }
+
+        }
+
+        return addresses;
+
+    }
+
 }
