@@ -4,6 +4,8 @@ import com.autolimit.aop.RateLimitAspect;
 import com.autolimit.exception.AutoLimitRateLimitExceptionResolver;
 import com.autolimit.filter.IpRateLimitFilter;
 import com.autolimit.identity.CallerIdentityResolver;
+import com.autolimit.identity.ClientIpResolver;
+import com.autolimit.identity.TrustedProxyClientIpResolver;
 import com.autolimit.ratelimit.RateLimitService;
 import jakarta.servlet.DispatcherType;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -33,8 +35,8 @@ public class AutoLimitAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public RateLimitAspect rateLimitAspect(RateLimitService limiter, CallerIdentityResolver resolver) {
-        return new RateLimitAspect(limiter, resolver);
+    public RateLimitAspect rateLimitAspect(RateLimitService limiter, CallerIdentityResolver resolver, ClientIpResolver clientIpResolver) {
+        return new RateLimitAspect(limiter, resolver, clientIpResolver);
     }
 
     @Bean
@@ -48,8 +50,8 @@ public class AutoLimitAutoConfiguration {
     static class IpFilterConfiguration {
         @Bean
         @ConditionalOnMissingBean
-        IpRateLimitFilter ipRateLimitFilter(AutoLimitProperties properties) {
-            return new IpRateLimitFilter(properties.getPreAuthRateLimit());
+        IpRateLimitFilter ipRateLimitFilter(AutoLimitProperties properties, ClientIpResolver clientIpResolver) {
+            return new IpRateLimitFilter(properties.getPreAuthRateLimit(), clientIpResolver);
         }
 
         @Bean
@@ -64,5 +66,15 @@ public class AutoLimitAutoConfiguration {
             registration.addUrlPatterns("/*");
             return registration;
         }
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ClientIpResolver.class)
+    public ClientIpResolver clientIpResolver(AutoLimitProperties properties){
+        return new TrustedProxyClientIpResolver(
+                properties.getTrustedProxies(),
+                properties.getMaxForwardedHeaderChars(),
+                properties.getMaxForwardedHops()
+        );
     }
 }
