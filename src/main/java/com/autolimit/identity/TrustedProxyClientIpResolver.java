@@ -110,31 +110,6 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
 
     }
 
-    private record IpRange(byte[] network, int prefixLength) {
-
-        static IpRange parse(String value) {
-
-            if (value == null || value.isBlank()) {
-
-                throw new IllegalArgumentException("Proxy entry cannot be blank");
-
-            }
-
-            // Split CIDR and IP
-            String[] parts = value.trim().split("/", -1);
-
-            if (parts.length > 2) {
-                throw new IllegalArgumentException("Invalid proxy CIDR");
-            }
-
-            byte[] address = literalAddress(parts[0]).getAddress();
-            int prefix = address.length * 8;
-
-            return new IpRange(address, prefix);
-        }
-
-    }
-
     private boolean isTrusted(InetAddress address) {
 
         return trustedProxies.stream()
@@ -182,6 +157,60 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
         }
 
         return addresses;
+
+    }
+
+    private record IpRange(byte[] network, int prefixLength) {
+
+        static IpRange parse(String value) {
+
+            if (value == null || value.isBlank()) {
+
+                throw new IllegalArgumentException("Proxy entry cannot be blank");
+
+            }
+
+            // Split CIDR and IP
+            String[] parts = value.trim().split("/", -1);
+
+            if (parts.length > 2) {
+                throw new IllegalArgumentException("Invalid proxy CIDR");
+            }
+
+            byte[] address = literalAddress(parts[0]).getAddress();
+            int prefix = address.length * 8;
+
+            return new IpRange(address, prefix);
+        }
+
+        boolean contains(InetAddress candidate) {
+
+            byte[] address = candidate.getAddress();
+
+            if (address.length != network.length){
+                return false;
+            }
+
+            int fullBytes = prefixLength / 8;
+            int remainingBits = prefixLength % 8;
+
+            for (int i = 0; i < fullBytes; i++){
+
+                if (address[i] != network[i]) {
+                    return false;
+                }
+
+            }
+
+            if (remainingBits == 0) {
+                return true;
+            }
+
+            int mask = (0xff << (8 - remainingBits)) & 0xff;
+
+            return (address[fullBytes] & mask) == (network[fullBytes] & mask);
+
+        }
 
     }
 
