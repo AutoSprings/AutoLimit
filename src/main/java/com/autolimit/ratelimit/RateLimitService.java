@@ -9,24 +9,37 @@ import java.time.Duration;
  * In memory cache of rate limits using Caffeine
  */
 public class RateLimitService {
-    private final Cache<String, long[]> cache = Caffeine.newBuilder()
+
+    private record Window(long count, long endsAt) {}
+
+    private final Cache<String, Window> cache = Caffeine.newBuilder()
             .expireAfterAccess(Duration.ofMinutes(15))
             .build();
 
     // check if a user has requests in the cache, if they go over the max return false to throw 429
     public boolean isAllowed(String key, int maxRequests, long windowMillis) {
-        long now = System.currentTimeMillis();
 
-        long[] data = cache.get(key, k -> new long[]{0, now + windowMillis});
+        boolean[] allowed = {false};
 
-        if (now > data[1]) {
-            data[0] = 1;
-            data[1] = now + windowMillis;
-        } else {
-            data[0]++;
-        }
+        cache.asMap().compute(key, (k, existing) -> {
 
-        cache.put(key, data);
-        return data[0] <= maxRequests;
+            long now = System.currentTimeMillis();
+
+            Window current = existing;
+
+            if (current == null || now >= current.endsAt()) {
+                current = new Window(0, now + windowMillis);
+            }
+
+            if (current.count() >= maxRequests) {
+                return current;
+            }
+
+            allowed[0] = true;
+            return new Window(current.count() + 1, current.endsAt());
+
+        });
+
+        return allowed[0];
     }
 }
