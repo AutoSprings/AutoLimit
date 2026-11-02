@@ -6,6 +6,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Expiry;
 import com.github.benmanes.caffeine.cache.Ticker;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 /**
  * In memory cache of rate limits using Caffeine
@@ -16,6 +17,9 @@ public class RateLimitService {
     private final Ticker ticker;
 
     private final Cache<String, Window> cache;
+
+    private static final long MAX_WINDOW_MILLIS = TimeUnit.DAYS.toMillis(365);
+
 
     public RateLimitService() {
         this(Ticker.systemTicker());
@@ -60,16 +64,29 @@ public class RateLimitService {
     // check if a user has requests in the cache, if they go over the max return false to throw 429
     public boolean isAllowed(String key, int maxRequests, long windowMillis) {
 
+        Objects.requireNonNull(key, "key");
+
+        if (maxRequests < 0) {
+
+            throw new IllegalArgumentException("maxRequests cant be negative");
+        }
+
+        if (windowMillis <= 0 || windowMillis > MAX_WINDOW_MILLIS) {
+
+            throw new IllegalArgumentException("windowMillis must be between 1 ms and 365 days");
+        }
+
+        if (maxRequests == 0) {return false;}
+
+        long windowNanos = Math.multiplyExact(windowMillis, 1_000_000L);
         boolean[] allowed = {false};
 
         cache.asMap().compute(key, (k, existing) -> {
-
-            long now = System.currentTimeMillis();
-
+            long now = ticker.read();
             Window current = existing;
 
-            if (current == null || now >= current.endsAtNanos()) {
-                current = new Window(0, now + windowMillis);
+            if (current == null || now - current.endsAtNanos() >= 0) {
+                current = new Window(0, now + windowNanos);
             }
 
             if (current.count() >= maxRequests) {
@@ -77,8 +94,10 @@ public class RateLimitService {
             }
 
             allowed[0] = true;
-            return new Window(current.count() + 1, current.endsAtNanos());
-
+            return new Window(
+                    current.count() + 1,
+                    current.endsAtNanos()
+            );
         });
 
         return allowed[0];
