@@ -1,8 +1,11 @@
 package com.autolimit.ratelimit;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Ticker;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -11,12 +14,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
 
 class RateLimitServiceTest {
-    private final RateLimitService service = new RateLimitService();
+    private final FakeTicker ticker = new FakeTicker();
+    private final RateLimitService service = new RateLimitService(ticker);
 
     @Test
     void allowsUpToTheLimitAndRejectsFurtherRequests() {
@@ -37,8 +41,34 @@ class RateLimitServiceTest {
     @Test
     void permitsRequestsAgainAfterWindowExpires() {
         assertThat(service.isAllowed("user", 1, 30)).isTrue();
-        await().atMost(Duration.ofSeconds(2)).until(() -> service.isAllowed("user", 1, 60_000));
+        ticker.advance(Duration.ofMillis(30).minusNanos(1));
+        assertThat(service.isAllowed("user", 1, 30)).isFalse();
+
+        ticker.advance(Duration.ofNanos(1));
+        assertThat(service.isAllowed("user", 1, 60_000)).isTrue();
         assertThat(service.isAllowed("user", 1, 60_000)).isFalse();
+    }
+
+    @Test
+    void cacheExpiresOnTheSameClockWithoutExtendingTheWindow() {
+        // Inspect cache visibility before another limiter call can reset the window.
+        var cache = (Cache<?, ?>) ReflectionTestUtils.getField(service, "cache");
+        assertThat(cache).isNotNull();
+        assertThat(service.isAllowed("user", 2, 100)).isTrue();
+
+        ticker.advance(Duration.ofMillis(40));
+        assertThat(service.isAllowed("user", 2, 100)).isTrue();
+        ticker.advance(Duration.ofMillis(40));
+        assertThat(service.isAllowed("user", 2, 100)).isFalse();
+
+        ticker.advance(Duration.ofMillis(20).minusNanos(1));
+        assertThat(cache.asMap().get("user")).isNotNull();
+        ticker.advance(Duration.ofNanos(1));
+        assertThat(cache.asMap().get("user")).isNull();
+
+        assertThat(service.isAllowed("user", 2, 100)).isTrue();
+        assertThat(service.isAllowed("user", 2, 100)).isTrue();
+        assertThat(service.isAllowed("user", 2, 100)).isFalse();
     }
 
     @ParameterizedTest
@@ -53,8 +83,11 @@ class RateLimitServiceTest {
 
     @Test
     void concurrentRequestsResetAnExpiredWindowOnlyOnce() throws Exception {
-        // A zero-length window is already expired when the concurrent requests start.
-        assertThat(service.isAllowed("user", 100, 0)).isTrue();
+        for (int i = 0; i < 100; i++) {
+            assertThat(service.isAllowed("user", 100, 60_000)).isTrue();
+        }
+        assertThat(service.isAllowed("user", 100, 60_000)).isFalse();
+        ticker.advance(Duration.ofMinutes(1));
 
         assertConcurrentAcceptedCount(100);
     }
@@ -73,6 +106,20 @@ class RateLimitServiceTest {
     @Test
     void zeroQuotaRejectsTheFirstRequest() {
         assertThat(service.isAllowed("user", 0, 60_000)).isFalse();
+    }
+
+    private static final class FakeTicker implements Ticker {
+        // An arbitrary monotonic origin exposes accidental use of the system clock.
+        private final AtomicLong nanos = new AtomicLong(Duration.ofDays(7).toNanos());
+
+        @Override
+        public long read() {
+            return nanos.get();
+        }
+
+        void advance(Duration duration) {
+            nanos.addAndGet(duration.toNanos());
+        }
     }
 
     private void assertConcurrentAcceptedCount(int expectedAccepted) throws Exception {
