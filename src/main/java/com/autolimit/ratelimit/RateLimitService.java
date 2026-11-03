@@ -20,13 +20,30 @@ public class RateLimitService {
 
     private static final long MAX_WINDOW_MILLIS = TimeUnit.DAYS.toMillis(365);
 
+    private static final int DEFAULT_MAX_TRACKED_KEYS = 100000;
+
+    private final int maxTrackedKeys;
 
     public RateLimitService() {
-        this(Ticker.systemTicker());
+        this(Ticker.systemTicker(), DEFAULT_MAX_TRACKED_KEYS);
+    }
+
+    public RateLimitService(int maxTrackedKeys) {
+        this(Ticker.systemTicker(), maxTrackedKeys);
     }
 
     RateLimitService(Ticker ticker) {
+        this(ticker, DEFAULT_MAX_TRACKED_KEYS);
+    }
+
+    RateLimitService(Ticker ticker, int maxTrackedKeys) {
         this.ticker = Objects.requireNonNull(ticker);
+
+        if (maxTrackedKeys < 1) {
+            throw new IllegalArgumentException("maxTrackedKeys must be greater than 0");
+        }
+
+        this.maxTrackedKeys = maxTrackedKeys;
 
         this.cache = Caffeine.newBuilder()
                 .ticker(ticker)
