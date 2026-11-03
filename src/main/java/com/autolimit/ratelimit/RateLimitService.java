@@ -96,6 +96,17 @@ public class RateLimitService {
         if (maxRequests == 0) {return false;}
 
         long windowNanos = Math.multiplyExact(windowMillis, 1_000_000L);
+
+        if (cache.getIfPresent(key) == null) {
+            if (cache.asMap().size() >= maxTrackedKeys) {
+                cache.cleanUp();
+
+                if (cache.asMap().size() >= maxTrackedKeys) {
+                    return false;
+                }
+            }
+        }
+
         boolean[] allowed = {false};
 
         cache.asMap().compute(key, (k, existing) -> {
