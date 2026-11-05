@@ -75,9 +75,9 @@ class IntegrationTest {
         assertThat(request("/limited", carol, "203.0.113.10").getStatusCode().value()).isEqualTo(429);
         assertThat(ipFilter.invocations.get() - before).isEqualTo(12);
         assertThat(ipFilter.authenticatedAtEntry.get()).isZero();
-        verify(limiter, times(4)).isAllowed(endpointKey("alice"), 3, 60_000);
-        verify(limiter, times(5)).isAllowed(endpointKey("bob"), 4, 60_000);
-        verify(limiter, times(3)).isAllowed(endpointKey("carol"), 2, 60_000);
+        verify(limiter, times(4)).check(endpointKey("alice"), 3, 60_000);
+        verify(limiter, times(5)).check(endpointKey("bob"), 4, 60_000);
+        verify(limiter, times(3)).check(endpointKey("carol"), 2, 60_000);
         assertThat(servletContext.getFilterRegistrations().values().stream()
                 .filter(filter -> filter.getClassName().equals(CountingIpFilter.class.getName()))).hasSize(1);
         assertThat(security.getFilterChains().stream().flatMap(chain -> chain.getFilters().stream())

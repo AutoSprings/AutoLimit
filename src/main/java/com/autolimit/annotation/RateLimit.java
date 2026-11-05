@@ -8,6 +8,10 @@ import java.util.concurrent.TimeUnit;
  * Each caller has a separate quota per application namespace and concrete handler
  * signature (target class, method name, and parameter types). Class-level defaults
  * apply independently to each method; multiple URLs for one method share a quota.
+ * Windows start on the first admitted call and do not slide with later requests.
+ * Quota is consumed before method execution, including calls that later fail;
+ * there is no refund. Ordering relative to other method-level advice is controlled
+ * by the application. Exhausted windows return a rounded-up Retry-After delay.
  * <p>
  *     Requests get tracked by client identifiers. If a user is authenticated
  *     the rate limiter tracks them by their uuid ({@code user:userId}). For

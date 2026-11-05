@@ -4,6 +4,7 @@ import com.autolimit.annotation.RateLimit;
 import com.autolimit.annotation.UserQuota;
 import com.autolimit.exception.RateLimitExceededException;
 import com.autolimit.ratelimit.RateLimitService;
+import com.autolimit.ratelimit.RateLimitDecision;
 import com.autolimit.identity.CallerIdentity;
 import com.autolimit.identity.CallerIdentityResolver;
 import com.autolimit.identity.TrustedProxyClientIpResolver;
@@ -30,6 +31,7 @@ class RateLimitAspectTest {
     @BeforeEach
     void setUp() {
         when(identityResolver.resolve()).thenReturn(Optional.empty());
+        when(limiter.check(anyString(), anyInt(), anyLong())).thenReturn(RateLimitDecision.deny());
         AspectJProxyFactory factory = new AspectJProxyFactory(new LimitedService());
         factory.addAspect(new RateLimitAspect(limiter, identityResolver,
                 new TrustedProxyClientIpResolver(List.of(), 8192, 32)));
@@ -79,25 +81,25 @@ class RateLimitAspectTest {
     @Test
     void choosesHighestMatchingRoleQuotaCaseInsensitively() {
         resolveCaller("alice", "premium", "ENTERPRISE");
-        when(limiter.isAllowed(key("user:alice", "tiered"), 20, 30_000)).thenReturn(true);
+        when(limiter.check(key("user:alice", "tiered"), 20, 30_000)).thenReturn(RateLimitDecision.permit());
         assertThat(service.tiered()).isEqualTo("ok");
-        verify(limiter).isAllowed(key("user:alice", "tiered"), 20, 30_000);
+        verify(limiter).check(key("user:alice", "tiered"), 20, 30_000);
     }
 
     @Test
     void unmatchedRolesUseFallbackQuota() {
         resolveCaller("alice", "USER");
-        when(limiter.isAllowed(key("user:alice", "tiered"), 2, 30_000)).thenReturn(true);
+        when(limiter.check(key("user:alice", "tiered"), 2, 30_000)).thenReturn(RateLimitDecision.permit());
         service.tiered();
-        verify(limiter).isAllowed(key("user:alice", "tiered"), 2, 30_000);
+        verify(limiter).check(key("user:alice", "tiered"), 2, 30_000);
     }
 
     @Test
     void callerWithoutRolesUsesUserKeyAndFallbackQuota() {
         resolveCaller("bob");
-        when(limiter.isAllowed(key("user:bob", "tiered"), 2, 30_000)).thenReturn(true);
+        when(limiter.check(key("user:bob", "tiered"), 2, 30_000)).thenReturn(RateLimitDecision.permit());
         service.tiered();
-        verify(limiter).isAllowed(key("user:bob", "tiered"), 2, 30_000);
+        verify(limiter).check(key("user:bob", "tiered"), 2, 30_000);
     }
 
     @Test
@@ -105,12 +107,12 @@ class RateLimitAspectTest {
         when(identityResolver.resolve())
                 .thenReturn(Optional.of(new CallerIdentity("alice", List.of("PREMIUM"))))
                 .thenReturn(Optional.of(new CallerIdentity("bob", List.of("ENTERPRISE"))));
-        when(limiter.isAllowed(key("user:alice", "tiered"), 10, 30_000)).thenReturn(true);
-        when(limiter.isAllowed(key("user:bob", "tiered"), 20, 30_000)).thenReturn(true);
+        when(limiter.check(key("user:alice", "tiered"), 10, 30_000)).thenReturn(RateLimitDecision.permit());
+        when(limiter.check(key("user:bob", "tiered"), 20, 30_000)).thenReturn(RateLimitDecision.permit());
         service.tiered();
         service.tiered();
-        verify(limiter).isAllowed(key("user:alice", "tiered"), 10, 30_000);
-        verify(limiter).isAllowed(key("user:bob", "tiered"), 20, 30_000);
+        verify(limiter).check(key("user:alice", "tiered"), 10, 30_000);
+        verify(limiter).check(key("user:bob", "tiered"), 20, 30_000);
         verify(identityResolver, times(2)).resolve();
     }
 
@@ -120,9 +122,9 @@ class RateLimitAspectTest {
         request.setRemoteAddr("198.51.100.20");
         request.addHeader("X-Forwarded-For", "203.0.113.10, 10.0.0.1");
         RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
-        when(limiter.isAllowed(key("ip:198.51.100.20", "tiered"), 2, 30_000)).thenReturn(true);
+        when(limiter.check(key("ip:198.51.100.20", "tiered"), 2, 30_000)).thenReturn(RateLimitDecision.permit());
         service.tiered();
-        verify(limiter).isAllowed(key("ip:198.51.100.20", "tiered"), 2, 30_000);
+        verify(limiter).check(key("ip:198.51.100.20", "tiered"), 2, 30_000);
     }
 
     @Test
@@ -130,25 +132,33 @@ class RateLimitAspectTest {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRemoteAddr("203.0.113.11");
         RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
-        when(limiter.isAllowed(key("ip:203.0.113.11", "tiered"), 2, 30_000)).thenReturn(true);
+        when(limiter.check(key("ip:203.0.113.11", "tiered"), 2, 30_000)).thenReturn(RateLimitDecision.permit());
         service.tiered();
-        verify(limiter).isAllowed(key("ip:203.0.113.11", "tiered"), 2, 30_000);
+        verify(limiter).check(key("ip:203.0.113.11", "tiered"), 2, 30_000);
     }
 
     @Test
     void exceededQuotaPreventsMethodInvocation() {
         assertThatThrownBy(service::tiered).isInstanceOf(RateLimitExceededException.class);
-        verify(limiter).isAllowed(key("ip:unknown", "tiered"), 2, 30_000);
+        verify(limiter).check(key("ip:unknown", "tiered"), 2, 30_000);
+    }
+
+    @Test
+    void rejectedWindowCarriesTheAtomicRetryDelay() {
+        when(limiter.check(key("ip:unknown", "tiered"), 2, 30_000)).thenReturn(RateLimitDecision.deny(7));
+        assertThatThrownBy(service::tiered).isInstanceOfSatisfying(RateLimitExceededException.class,
+                failure -> assertThat(failure.getRetryAfterSeconds()).hasValue(7));
+        verify(limiter).check(key("ip:unknown", "tiered"), 2, 30_000);
     }
 
     @Test
     void classLimitAppliesUnlessMethodOverridesIt() {
-        when(limiter.isAllowed(key("ip:unknown", "classLimited"), 3, 60_000)).thenReturn(true);
-        when(limiter.isAllowed(key("ip:unknown", "override"), 1, 60_000)).thenReturn(true);
+        when(limiter.check(key("ip:unknown", "classLimited"), 3, 60_000)).thenReturn(RateLimitDecision.permit());
+        when(limiter.check(key("ip:unknown", "override"), 1, 60_000)).thenReturn(RateLimitDecision.permit());
         service.classLimited();
         service.override();
-        verify(limiter).isAllowed(key("ip:unknown", "classLimited"), 3, 60_000);
-        verify(limiter).isAllowed(key("ip:unknown", "override"), 1, 60_000);
+        verify(limiter).check(key("ip:unknown", "classLimited"), 3, 60_000);
+        verify(limiter).check(key("ip:unknown", "override"), 1, 60_000);
     }
 
     private String key(String caller, String method) {

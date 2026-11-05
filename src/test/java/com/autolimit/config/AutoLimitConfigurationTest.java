@@ -68,6 +68,8 @@ class AutoLimitConfigurationTest {
                     .andExpect(status().isOk());
             mvc.perform(get("/limited").with(request -> { request.setRemoteAddr("203.0.113.1"); return request; }))
                     .andExpect(status().isTooManyRequests()).andExpect(content().contentType("application/json"))
+                    .andExpect(result -> assertThat(Long.parseLong(result.getResponse().getHeader("Retry-After")))
+                            .isBetween(1L, 60L))
                     .andExpect(jsonPath("$.error").value("Too Many Requests"));
             mvc.perform(get("/limited").with(request -> { request.setRemoteAddr("203.0.113.2"); return request; }))
                     .andExpect(status().isOk());
@@ -87,6 +89,85 @@ class AutoLimitConfigurationTest {
             mvc.perform(get("/limited").header("X-Forwarded-For", "198.51.100.2" + suffix)
                     .with(request -> { request.setRemoteAddr(peer); return request; }))
                     .andExpect(status().isTooManyRequests());
+        });
+    }
+
+    @Test
+    void rejectionBeforeTheHandlerDoesNotChargeEndpointQuota() {
+        var limiter = spy(new RateLimitService());
+        runner.withBean(RateLimitService.class, () -> limiter).run(context -> {
+            jakarta.servlet.Filter upstreamAuthorization = (request, response, chain) -> {
+                if (((jakarta.servlet.http.HttpServletRequest) request).getHeader("Deny") != null) {
+                    ((jakarta.servlet.http.HttpServletResponse) response).setStatus(403);
+                } else {
+                    chain.doFilter(request, response);
+                }
+            };
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).addFilters(upstreamAuthorization).build();
+            mvc.perform(get("/limited").header("Deny", "true")).andExpect(status().isForbidden());
+            verifyNoInteractions(limiter);
+            mvc.perform(get("/limited")).andExpect(status().isOk());
+            mvc.perform(get("/limited")).andExpect(status().isTooManyRequests());
+        });
+    }
+
+    @Test
+    void handlerAuthorizationFailuresConsumeQuotaWithoutRefund() {
+        runner.run(context -> {
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).build();
+            mvc.perform(get("/forbidden")).andExpect(status().isForbidden());
+            mvc.perform(get("/forbidden")).andExpect(status().isTooManyRequests());
+            mvc.perform(get("/unlimited")).andExpect(status().isOk());
+            mvc.perform(get("/unlimited")).andExpect(status().isOk());
+        });
+    }
+
+    @Test
+    void zeroQuotaAndCapacityRejectionsOmitUnknownRetryTime() {
+        runner.withPropertyValues("autolimit.max-tracked-keys=1").run(context -> {
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).build();
+            mvc.perform(get("/zero")).andExpect(status().isTooManyRequests())
+                    .andExpect(header().doesNotExist("Retry-After"));
+            mvc.perform(get("/limited")).andExpect(status().isOk());
+            mvc.perform(get("/limited").with(request -> {
+                request.setRemoteAddr("203.0.113.99"); return request;
+            })).andExpect(status().isTooManyRequests()).andExpect(header().doesNotExist("Retry-After"));
+        });
+    }
+
+    @Test
+    void unannotatedAndUnmappedUrlsStillConsumeTheEarlyIpQuota() {
+        runner.withPropertyValues("autolimit.pre-auth-rate-limit=1").run(context -> {
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context)
+                    .addFilters(context.getBean(IpRateLimitFilter.class)).build();
+            mvc.perform(get("/unlimited").with(request -> {
+                request.setRemoteAddr("203.0.113.10"); return request;
+            })).andExpect(status().isOk());
+            mvc.perform(get("/missing")).andExpect(status().isNotFound());
+            mvc.perform(get("/unlimited")).andExpect(status().isTooManyRequests())
+                    .andExpect(header().string("Retry-After", "1"));
+        });
+    }
+
+    @Test
+    void customBackendDecisionsControlBothQuotaLayersAndTheBooleanWrapper() {
+        var backend = new RateLimitService() {
+            @Override
+            public com.autolimit.ratelimit.RateLimitDecision check(String key, int quota, long window) {
+                return com.autolimit.ratelimit.RateLimitDecision.deny(7);
+            }
+        };
+        assertThat(backend.isAllowed("direct", 1, 1000)).isFalse();
+        runner.withBean(RateLimitService.class, () -> backend).run(context -> {
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).build();
+            mvc.perform(get("/limited")).andExpect(status().isTooManyRequests())
+                    .andExpect(header().string("Retry-After", "7"));
+            var response = new org.springframework.mock.web.MockHttpServletResponse();
+            context.getBean(IpRateLimitFilter.class).doFilter(
+                    new org.springframework.mock.web.MockHttpServletRequest(), response,
+                    (request, result) -> { throw new AssertionError("Rejected before chain"); });
+            assertThat(response.getStatus()).isEqualTo(429);
+            assertThat(response.getHeader("Retry-After")).isEqualTo("7");
         });
     }
 
@@ -229,8 +310,10 @@ class AutoLimitConfigurationTest {
         // the IP filter's one-second window and context startup time.
         var sharedLimiter = mock(RateLimitService.class);
         var consumedKeys = new java.util.HashSet<String>();
-        when(sharedLimiter.isAllowed(anyString(), anyInt(), anyLong()))
-                .thenAnswer(call -> consumedKeys.add(call.getArgument(0)));
+        when(sharedLimiter.check(anyString(), anyInt(), anyLong()))
+                .thenAnswer(call -> consumedKeys.add(call.getArgument(0))
+                        ? com.autolimit.ratelimit.RateLimitDecision.permit()
+                        : com.autolimit.ratelimit.RateLimitDecision.deny());
         var namespaces = List.of("orders", "billing", "orders");
         for (int index = 0; index < namespaces.size(); index++) {
             String namespace = namespaces.get(index);
@@ -261,6 +344,17 @@ class AutoLimitConfigurationTest {
 
     @RestController
     public static class Routes {
+        @RateLimit(fallbackRequests = 0)
+        @GetMapping("/zero") public String zero() { throw new AssertionError("Must not be invoked"); }
+
+        @RateLimit(fallbackRequests = 1)
+        @GetMapping("/forbidden") public String forbidden() {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+
+        @GetMapping("/unlimited") public String unlimited() { return "ok"; }
+
         @RateLimit(value = {@UserQuota(role = "PREMIUM", maxRequests = 2),
                 @UserQuota(role = "ENTERPRISE", maxRequests = 3)}, fallbackRequests = 1)
         @GetMapping("/limited") public String limited() { return "limited"; }

@@ -17,6 +17,17 @@ import static org.assertj.core.api.Assertions.*;
 class QuotaIsolationTest {
     private final RateLimitService limiter = new RateLimitService();
 
+    @Test
+    void directCallsAndSelfInvocationBypassAnnotationQuota() {
+        First target = new First();
+        target.list();
+        target.list();
+        First proxied = proxy(target, "app", true, "alice");
+        proxied.selfCall();
+        proxied.list();
+        assertThatThrownBy(proxied::list).isInstanceOf(RateLimitExceededException.class);
+    }
+
     private <T> T proxy(T target, String namespace, boolean classProxy, String user) {
         var factory = new AspectJProxyFactory(target);
         factory.setProxyTargetClass(classProxy);
@@ -75,6 +86,7 @@ class QuotaIsolationTest {
     public static class First {
         public void list() {}
         public void list(String query) {}
+        public void selfCall() { list(); }
     }
 
     @RateLimit(fallbackRequests = 1)

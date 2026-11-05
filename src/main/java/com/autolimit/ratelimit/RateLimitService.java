@@ -15,6 +15,9 @@ import java.util.concurrent.TimeUnit;
  * never on idle time or capacity pressure. At capacity, new keys are denied until
  * an expired key releases a slot; existing keys continue to use their quotas.
  * This service is not a token revocation store.
+ * Windows start on first admission, do not slide, and permit bursts across their
+ * boundaries. Counters are local to this service instance; admission is charged
+ * before downstream work and is never refunded for a later failure.
  */
 public class RateLimitService {
 
@@ -95,6 +98,22 @@ public class RateLimitService {
      * @throws NullPointerException if key is null
      */
     public boolean isAllowed(String key, int maxRequests, long windowMillis) {
+        return check(key, maxRequests, windowMillis).allowed();
+    }
+
+    /**
+     * Atomically checks and consumes quota, capturing retry timing in the same update.
+     * This is the backend extension point used by the aspect and IP filter.
+     *
+     * @param key quota identity; use consistent window settings per key
+     * @param maxRequests nonnegative quota; zero denies without allocating state
+     * @param windowMillis window length from 1 millisecond through 365 days
+     * @return admission result; exhausted windows report remaining time rounded up
+     *         to seconds, while zero quotas and capacity rejections have no retry delay
+     * @throws IllegalArgumentException for a negative quota or unsupported window
+     * @throws NullPointerException if key is null
+     */
+    public RateLimitDecision check(String key, int maxRequests, long windowMillis) {
 
         Objects.requireNonNull(key, "key");
 
@@ -108,17 +127,17 @@ public class RateLimitService {
             throw new IllegalArgumentException("windowMillis must be between 1 ms and 365 days");
         }
 
-        if (maxRequests == 0) {return false;}
+        if (maxRequests == 0) {return RateLimitDecision.deny();}
 
         long windowNanos = Math.multiplyExact(windowMillis, 1_000_000L);
 
-        boolean[] allowed = {false};
+        RateLimitDecision[] decision = new RateLimitDecision[1];
 
         // Existing keys retain per-key atomic updates without taking the admission lock.
         Window updated = cache.asMap().computeIfPresent(key,
-                (k, existing) -> consume(existing, maxRequests, windowNanos, allowed));
+                (k, existing) -> consume(existing, maxRequests, windowNanos, decision));
         if (updated != null) {
-            return allowed[0];
+            return decision[0];
         }
 
         // All insertions share this lock so distinct keys cannot claim the same free slot.
@@ -129,28 +148,31 @@ public class RateLimitService {
                 trackedKeys.removeIf(trackedKey -> cache.asMap().computeIfPresent(trackedKey,
                         (k, current) -> remaining(current, ticker.read()) > 0 ? current : null) == null);
                 if (trackedKeys.size() >= maxTrackedKeys) {
-                    return false;
+                    return RateLimitDecision.deny();
                 }
             }
 
             cache.asMap().compute(key,
-                    (k, existing) -> consume(existing, maxRequests, windowNanos, allowed));
+                    (k, existing) -> consume(existing, maxRequests, windowNanos, decision));
             trackedKeys.add(key);
-            return allowed[0];
+            return decision[0];
         }
     }
 
-    private Window consume(Window current, int maxRequests, long windowNanos, boolean[] allowed) {
+    private Window consume(Window current, int maxRequests, long windowNanos, RateLimitDecision[] decision) {
         long now = ticker.read();
         if (current == null || now - current.endsAtNanos() >= 0) {
             current = new Window(0, now + windowNanos);
         }
 
         if (current.count() >= maxRequests) {
+            long remainingNanos = current.endsAtNanos() - now;
+            long seconds = 1 + (remainingNanos - 1) / TimeUnit.SECONDS.toNanos(1);
+            decision[0] = RateLimitDecision.deny(seconds);
             return current;
         }
 
-        allowed[0] = true;
+        decision[0] = RateLimitDecision.permit();
         return new Window(current.count() + 1, current.endsAtNanos());
     }
 }

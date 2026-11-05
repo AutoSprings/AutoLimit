@@ -6,6 +6,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import java.util.OptionalLong;
 
 class RateLimitExceptionResolverTest {
     @Test
@@ -17,9 +18,22 @@ class RateLimitExceptionResolverTest {
         assertThat(result.isEmpty()).isTrue();
         assertThat(response.getStatus()).isEqualTo(429);
         assertThat(response.getContentType()).isEqualTo("application/json");
+        assertThat(response.getHeader("Retry-After")).isNull();
         var body = new ObjectMapper().readTree(response.getContentAsString());
         assertThat(body.get("error").asText()).isEqualTo("Too Many Requests");
         assertThat(body.get("message").asText()).isNotBlank();
+    }
+
+    @Test
+    void includesKnownRetryDelayWithoutChangingTheJsonBody() throws Exception {
+        var response = new MockHttpServletResponse();
+        new AutoLimitRateLimitExceptionResolver().resolveException(
+                new MockHttpServletRequest(), response, null,
+                new RateLimitExceededException("exceeded", OptionalLong.of(3)));
+        assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getHeader("Retry-After")).isEqualTo("3");
+        assertThat(new ObjectMapper().readTree(response.getContentAsString()).get("error").asText())
+                .isEqualTo("Too Many Requests");
     }
 
     @Test
