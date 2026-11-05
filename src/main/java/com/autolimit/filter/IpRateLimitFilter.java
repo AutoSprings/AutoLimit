@@ -3,6 +3,7 @@ package com.autolimit.filter;
 import com.autolimit.identity.ClientIpResolver;
 import com.autolimit.identity.TrustedProxyClientIpResolver;
 import com.autolimit.ratelimit.RateLimitService;
+import com.autolimit.ratelimit.QuotaKeyFactory;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,6 +22,7 @@ public class IpRateLimitFilter extends OncePerRequestFilter {
     private final int maxRequestsPerWindow;
     private final RateLimitService rateLimitService;
     private final ClientIpResolver clientIpResolver;
+    private final QuotaKeyFactory quotaKeys;
 
     public IpRateLimitFilter(int maxRequestsPerSecond, ClientIpResolver clientIpResolver) {
         this(maxRequestsPerSecond, clientIpResolver, new RateLimitService());
@@ -28,12 +30,19 @@ public class IpRateLimitFilter extends OncePerRequestFilter {
 
     public IpRateLimitFilter(int maxRequestsPerSecond, ClientIpResolver clientIpResolver,
                              RateLimitService rateLimitService) {
+        this(maxRequestsPerSecond, clientIpResolver, rateLimitService, QuotaKeyFactory.DEFAULT_NAMESPACE);
+    }
+
+    /** Creates an early IP quota isolated within the supplied application namespace. */
+    public IpRateLimitFilter(int maxRequestsPerSecond, ClientIpResolver clientIpResolver,
+                             RateLimitService rateLimitService, String namespace) {
         if (maxRequestsPerSecond < 1) {
             throw new IllegalArgumentException("maxRequestsPerSecond must be positive");
         }
         this.clientIpResolver = Objects.requireNonNull(clientIpResolver);
         this.rateLimitService = Objects.requireNonNull(rateLimitService);
         this.maxRequestsPerWindow = maxRequestsPerSecond;
+        this.quotaKeys = new QuotaKeyFactory(namespace);
     }
 
 
@@ -61,7 +70,7 @@ public class IpRateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (!rateLimitService.isAllowed("preauth:ip:" + clientIp, maxRequestsPerWindow, 1_000)) {
+        if (!rateLimitService.isAllowed(quotaKeys.preAuthIp(clientIp), maxRequestsPerWindow, 1_000)) {
             rejectWith429(response);
             return;
         }

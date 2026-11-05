@@ -37,8 +37,9 @@ public class AutoLimitAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public RateLimitAspect rateLimitAspect(RateLimitService limiter, CallerIdentityResolver resolver, ClientIpResolver clientIpResolver) {
-        return new RateLimitAspect(limiter, resolver, clientIpResolver);
+    public RateLimitAspect rateLimitAspect(RateLimitService limiter, CallerIdentityResolver resolver,
+                                         ClientIpResolver clientIpResolver, AutoLimitProperties properties) {
+        return new RateLimitAspect(limiter, resolver, clientIpResolver, properties.getNamespace());
     }
 
     @Bean
@@ -54,7 +55,8 @@ public class AutoLimitAutoConfiguration {
         @ConditionalOnMissingBean
         IpRateLimitFilter ipRateLimitFilter(AutoLimitProperties properties, ClientIpResolver clientIpResolver,
                                            RateLimitService rateLimitService) {
-            return new IpRateLimitFilter(properties.getPreAuthRateLimit(), clientIpResolver, rateLimitService);
+            return new IpRateLimitFilter(properties.getPreAuthRateLimit(), clientIpResolver,
+                    rateLimitService, properties.getNamespace());
         }
 
         @Bean

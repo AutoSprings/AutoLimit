@@ -1,12 +1,25 @@
 package com.autolimit.config;
 
 import java.util.List;
+import com.autolimit.ratelimit.QuotaKeyFactory;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /** Servlet IP protection is independent of the per-endpoint annotation quotas. */
 @ConfigurationProperties(prefix = "autolimit")
 public class AutoLimitProperties {
+
+    private String namespace = QuotaKeyFactory.DEFAULT_NAMESPACE;
+
+    /** Application identity used by endpoint and early IP quota keys. */
+    public String getNamespace() { return namespace; }
+
+    public void setNamespace(String namespace) {
+        if (namespace == null || namespace.isBlank()) {
+            throw new IllegalArgumentException("namespace must not be blank");
+        }
+        this.namespace = namespace;
+    }
 
     private List<String> trustedProxies = List.of();
     private int maxForwardedHeaderChars = 8192;
