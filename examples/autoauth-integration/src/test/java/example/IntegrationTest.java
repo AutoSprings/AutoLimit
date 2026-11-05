@@ -5,6 +5,7 @@ import com.autoauth.model.AutoAuthUser;
 import com.autolimit.filter.IpRateLimitFilter;
 import com.autolimit.identity.ClientIpResolver;
 import com.autolimit.ratelimit.RateLimitService;
+import com.autolimit.ratelimit.QuotaKeyFactory;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
@@ -61,7 +62,7 @@ class IntegrationTest {
     }
 
     @Test
-    void authenticatedQuotasUseJwtUserIdAndRolesAndIpFilterRunsOnceBeforeAuthentication() {
+    void authenticatedQuotasUseJwtUserIdAndRolesAndIpFilterRunsOnceBeforeAuthentication() throws Exception {
         String alice = tokens.generateAccessToken(new AutoAuthUser("alice", List.of("PREMIUM"), null));
         String bob = tokens.generateAccessToken(new AutoAuthUser("bob", List.of("PREMIUM", "ENTERPRISE"), null));
         String carol = tokens.generateAccessToken(new AutoAuthUser("carol", List.of("USER"), null));
@@ -74,9 +75,9 @@ class IntegrationTest {
         assertThat(request("/limited", carol, "203.0.113.10").getStatusCode().value()).isEqualTo(429);
         assertThat(ipFilter.invocations.get() - before).isEqualTo(12);
         assertThat(ipFilter.authenticatedAtEntry.get()).isZero();
-        verify(limiter, times(4)).isAllowed("user:alice:limited", 3, 60_000);
-        verify(limiter, times(5)).isAllowed("user:bob:limited", 4, 60_000);
-        verify(limiter, times(3)).isAllowed("user:carol:limited", 2, 60_000);
+        verify(limiter, times(4)).isAllowed(endpointKey("alice"), 3, 60_000);
+        verify(limiter, times(5)).isAllowed(endpointKey("bob"), 4, 60_000);
+        verify(limiter, times(3)).isAllowed(endpointKey("carol"), 2, 60_000);
         assertThat(servletContext.getFilterRegistrations().values().stream()
                 .filter(filter -> filter.getClassName().equals(CountingIpFilter.class.getName()))).hasSize(1);
         assertThat(security.getFilterChains().stream().flatMap(chain -> chain.getFilters().stream())
@@ -92,6 +93,12 @@ class IntegrationTest {
         assertThat(request("/private", null, "203.0.113.20").getStatusCode().value()).isEqualTo(401);
         String token = tokens.generateAccessToken(new AutoAuthUser("secured", List.of("USER"), null));
         assertThat(request("/private", token, "203.0.113.20").getBody()).isEqualTo("secured");
+    }
+
+    static String endpointKey(String user) throws NoSuchMethodException {
+        return new QuotaKeyFactory(QuotaKeyFactory.DEFAULT_NAMESPACE).endpoint(
+                IntegrationApplication.Routes.class, IntegrationApplication.Routes.class.getMethod("limited"),
+                "user:" + user);
     }
 
     private ResponseEntity<String> request(String path, String token, String ip) {

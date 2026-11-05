@@ -32,7 +32,7 @@ class EarlyIpOrderingTest {
     static void keys(DynamicPropertyRegistry properties) throws Exception { IntegrationTest.keys(properties); }
 
     @Test
-    void earlyIpRejectionSkipsJwtValidationAndEndpointQuota() {
+    void earlyIpRejectionSkipsJwtValidationAndEndpointQuota() throws Exception {
         // Warm the HTTP/MVC infrastructure using another IP before the one-second burst.
         http.getForEntity("/private", String.class);
         clearInvocations(validator, limiter);
@@ -47,6 +47,6 @@ class EarlyIpOrderingTest {
         assertThat(rejected.getHeaders().getFirst("Retry-After")).isEqualTo("1");
         assertThat(rejected.getBody()).contains("IP rate limit exceeded");
         verify(validator, times(1)).validateAccessToken(token);
-        verify(limiter, times(1)).isAllowed("user:early:limited", 3, 60_000);
+        verify(limiter, times(1)).isAllowed(IntegrationTest.endpointKey("early"), 3, 60_000);
     }
 }

@@ -5,13 +5,15 @@ import com.autolimit.annotation.UserQuota;
 import com.autolimit.exception.RateLimitExceededException;
 import com.autolimit.identity.ClientIpResolver;
 import com.autolimit.ratelimit.RateLimitService;
+import com.autolimit.ratelimit.QuotaKeyFactory;
 
-import jakarta.servlet.http.HttpServletRequest;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Before;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.aop.support.AopUtils;
+import org.springframework.util.ClassUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -34,13 +36,22 @@ public class RateLimitAspect {
     private final RateLimitService rateLimitService;
     private final CallerIdentityResolver identityResolver;
     private final ClientIpResolver clientIpResolver;
+    private final QuotaKeyFactory quotaKeys;
 
     public RateLimitAspect(RateLimitService rateLimitService,
                            CallerIdentityResolver identityResolver,
                            ClientIpResolver clientIpResolver) {
+        this(rateLimitService, identityResolver, clientIpResolver, QuotaKeyFactory.DEFAULT_NAMESPACE);
+    }
+
+    /** Creates endpoint quotas isolated within the supplied application namespace. */
+    public RateLimitAspect(RateLimitService rateLimitService,
+                           CallerIdentityResolver identityResolver,
+                           ClientIpResolver clientIpResolver, String namespace) {
         this.rateLimitService = rateLimitService;
         this.identityResolver = identityResolver;
         this.clientIpResolver = clientIpResolver;
+        this.quotaKeys = new QuotaKeyFactory(namespace);
     }
 
     /**
@@ -52,19 +63,20 @@ public class RateLimitAspect {
     @Before("@within(com.autolimit.annotation.RateLimit) || @annotation(com.autolimit.annotation.RateLimit)")
     public void checkRateLimit(JoinPoint joinPoint) {
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
-        Method method = signature.getMethod();
-
-        // fetch the spring bean instance
-        Class<?> targetClass = joinPoint.getTarget().getClass();
+        Class<?> targetClass = ClassUtils.getUserClass(joinPoint.getTarget());
+        Method method = AopUtils.getMostSpecificMethod(signature.getMethod(), targetClass);
 
         RateLimit annotation = AnnotatedElementUtils.findMergedAnnotation(method, RateLimit.class);
+        if (annotation == null) {
+            annotation = AnnotatedElementUtils.findMergedAnnotation(signature.getMethod(), RateLimit.class);
+        }
         if (annotation == null) {
             annotation = AnnotatedElementUtils.findMergedAnnotation(targetClass, RateLimit.class);
         }
 
         if (annotation != null) {
             // pass context of user and method to rate limiter
-            enforceLimit(annotation, method.getName());
+            enforceLimit(annotation, targetClass, method);
         }
     }
 
@@ -72,11 +84,12 @@ public class RateLimitAspect {
      * enforces the rate limit using rate limit service (caffeine in memory default, redis interface planned)
      *
      * @param rateLimit the limits laid out in the annotation of the method
-     * @param methodName the full method name {@code @RateLimit} is on
+     * @param targetClass the concrete handler class, excluding generated proxy subclasses
+     * @param method the most specific, bridge-resolved handler method
      *
      * @see RateLimitService
      */
-    private void enforceLimit(RateLimit rateLimit, String methodName) {
+    private void enforceLimit(RateLimit rateLimit, Class<?> targetClass, Method method) {
         String callerKey;
         Optional<CallerIdentity> caller = identityResolver.resolve();
 
@@ -111,7 +124,7 @@ public class RateLimitAspect {
             }
         }
 
-        String cacheKey = callerKey + ":" + methodName;
+        String cacheKey = quotaKeys.endpoint(targetClass, method, callerKey);
         long windowMillis = windowMillis(rateLimit.window(), rateLimit.unit());
 
         boolean allowed = rateLimitService.isAllowed(cacheKey, maxRequests, windowMillis);

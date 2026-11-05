@@ -53,8 +53,14 @@ methods; method annotations override class defaults. Like other Spring AOP
 features, interception requires calls through the Spring proxy.
 
 Without an identity resolver, all callers use IP quotas. With a resolver,
-authenticated callers use `user:<userId>:<methodName>` and anonymous callers use
-`ip:<clientIp>:<methodName>`. The highest matching role quota wins, ignoring case;
+authenticated callers use `user:<userId>` and anonymous callers use `ip:<clientIp>`.
+Each endpoint quota combines that caller identity with the application namespace,
+concrete target class, method name, and parameter types. Unrelated controllers,
+overloads, and concrete subclasses therefore have independent quotas, including
+when a method is inherited. JDK and class proxies of the same implementation use
+the same handler identity; generated proxy class names are excluded. Class-level
+annotations still create a separate quota per method. Multiple URL mappings for
+the same method share its quota. The highest matching role quota wins, ignoring case;
 users without matching roles use `fallbackRequests` under their own user ID.
 
 Exhausted annotation quotas return JSON with HTTP 429, `error`, and `message`.
@@ -64,11 +70,21 @@ The independent IP filter also returns JSON 429 and `Retry-After: 1`.
 
 ```yaml
 autolimit:
+  namespace: catalog # stable application identity; default is "default"
   pre-auth-rate-limit: 50 # requests per IP per one-second window; must be positive
   ip-limit-enabled: true # false disables only the early IP filter
   ip-filter-order: -110  # before Boot's default Spring Security order of -100
   max-tracked-keys: 100000 # positive capacity shared by IP-filter and endpoint keys
 ```
+
+Choose a distinct `autolimit.namespace` for each application that shares a limiter.
+The namespace applies to endpoint and early IP quotas and must be nonblank.
+Keep it stable across instances of the same application; do not use a per-instance
+random value. The default is suitable for the default per-process limiter.
+Namespaces and caller IDs are length-prefixed in internal keys so delimiters in
+their values cannot merge fields. Internal key strings are opaque and have changed
+from the previous caller-plus-method-name format; custom backends must account for
+the new keys. Changing a namespace or renaming/moving a handler starts fresh quotas.
 
 The IP filter applies to all request URLs, including authenticated requests,
 before endpoint quotas. AutoLimit registers its single `IpRateLimitFilter` bean
@@ -169,9 +185,18 @@ windowMillis)` returns false for both quota and capacity exhaustion. Use
 consistent window settings for each key; an active window keeps its original
 deadline until expiry.
 
+Manually constructed aspects and filters retain their existing constructors,
+which use namespace `default`. To share a limiter between applications, use
+`new RateLimitAspect(limiter, identityResolver, clientIpResolver, "catalog")` and
+`new IpRateLimitFilter(50, clientIpResolver, limiter, "catalog")`. Direct callers
+of `RateLimitService.isAllowed` remain responsible for their own unique keys.
+Separate bean instances with the same concrete class and method share endpoint
+quotas within a namespace; bean-name isolation and explicit shared policy IDs are
+not supported.
+
 Counters are per process, reset on restart, and are not shared between instances.
-Redis and token/leaky buckets are not implemented. Method-name key collisions
-across controllers remain a limitation. Proxy headers are used only for configured
+Redis and token/leaky buckets are not implemented. Application namespaces separate
+keys but do not provide distributed counters. Proxy headers are used only for configured
 `autolimit.trusted-proxies`; by default the socket peer supplies the client IP.
 AutoLimit contains no revocation store. Token revocation belongs to the
 authentication library and must retain active revocations until token expiry;

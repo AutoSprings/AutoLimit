@@ -5,6 +5,9 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Enforces rate limiting on a controller class or request-mapping method
+ * Each caller has a separate quota per application namespace and concrete handler
+ * signature (target class, method name, and parameter types). Class-level defaults
+ * apply independently to each method; multiple URLs for one method share a quota.
  * <p>
  *     Requests get tracked by client identifiers. If a user is authenticated
  *     the rate limiter tracks them by their uuid ({@code user:userId}). For

@@ -41,6 +41,12 @@ new keys receive HTTP 429 until capacity expires; active quotas are retained.
 Annotation windows must convert exactly to whole milliseconds between 1 ms and
 365 days. Authentication token revocation is managed separately by AutoAuth.
 
+Set `autolimit.namespace=autoauth-integration` for an explicit application identity.
+Use distinct namespaces for applications sharing a limiter. Endpoint quotas use
+the concrete handler class and full parameter signature, so unrelated handlers
+with the same method name remain independent. The namespace also scopes early IP
+quotas; counters remain per process with the default backend.
+
 Tests generate ephemeral RSA keys and JWTs. They verify separate user quotas,
 highest-role quotas, anonymous limiting, authentication, exactly one IP filter
 invocation per HTTP request, servlet registration outside the security chain,

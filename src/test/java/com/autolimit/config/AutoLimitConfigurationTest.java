@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -221,6 +222,42 @@ class AutoLimitConfigurationTest {
     @EnableWebMvc
     @Import(Routes.class)
     static class WebConfig {}
+
+    @Test
+    void applicationNamespacesIsolateEndpointAndIpQuotasOnSharedLimiter() {
+        // A nonexpiring one-request backend keeps this wiring test independent of
+        // the IP filter's one-second window and context startup time.
+        var sharedLimiter = mock(RateLimitService.class);
+        var consumedKeys = new java.util.HashSet<String>();
+        when(sharedLimiter.isAllowed(anyString(), anyInt(), anyLong()))
+                .thenAnswer(call -> consumedKeys.add(call.getArgument(0)));
+        var namespaces = List.of("orders", "billing", "orders");
+        for (int index = 0; index < namespaces.size(); index++) {
+            String namespace = namespaces.get(index);
+            boolean exhausted = index == 2;
+            runner.withBean(RateLimitService.class, () -> sharedLimiter)
+                    .withPropertyValues("autolimit.namespace=" + namespace, "autolimit.pre-auth-rate-limit=1")
+                    .run(context -> {
+                        assertThat(context).hasNotFailed();
+                        assertThat(context.getBean(AutoLimitProperties.class).getNamespace()).isEqualTo(namespace);
+                        MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).build();
+                        mvc.perform(get("/limited")).andExpect(status().is(exhausted ? 429 : 200));
+                        mvc.perform(get("/limited")).andExpect(status().isTooManyRequests());
+                        var response = new org.springframework.mock.web.MockHttpServletResponse();
+                        context.getBean(IpRateLimitFilter.class).doFilter(
+                                new org.springframework.mock.web.MockHttpServletRequest(), response,
+                                (request, result) -> {});
+                        assertThat(response.getStatus()).isEqualTo(exhausted ? 429 : 200);
+                    });
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    void blankNamespaceFailsStartup(String namespace) {
+        runner.withPropertyValues("autolimit.namespace=" + namespace)
+                .run(context -> assertThat(context).hasFailed());
+    }
 
     @RestController
     public static class Routes {
