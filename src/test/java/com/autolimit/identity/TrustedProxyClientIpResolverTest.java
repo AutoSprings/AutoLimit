@@ -12,6 +12,29 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.*;
 
 class TrustedProxyClientIpResolverTest {
+    @ParameterizedTest
+    @ValueSource(strings = {"X-Forwarded-For", "Forwarded"})
+    void frameworkForwardingCannotOverrideTheTransportPeer(String header) throws Exception {
+        var request = request("203.0.113.20", null);
+        request.addHeader(header, header.equals("Forwarded") ? "for=198.51.100.99" : "198.51.100.99");
+        var address = new java.util.concurrent.atomic.AtomicReference<String>();
+        new org.springframework.web.filter.ForwardedHeaderFilter().doFilter(request,
+                new org.springframework.mock.web.MockHttpServletResponse(), (wrapped, response) ->
+                        address.set(resolver.resolve(new jakarta.servlet.http.HttpServletRequestWrapper(
+                                (jakarta.servlet.http.HttpServletRequest) wrapped))));
+        assertThat(address.get()).isEqualTo("203.0.113.20");
+    }
+
+    @Test
+    void frameworkForwardingPreservesOurTrustedProxyChainPolicy() throws Exception {
+        var request = request("10.0.0.2", "198.51.100.99, 203.0.113.20, 10.0.0.1");
+        var address = new java.util.concurrent.atomic.AtomicReference<String>();
+        new org.springframework.web.filter.ForwardedHeaderFilter().doFilter(request,
+                new org.springframework.mock.web.MockHttpServletResponse(), (wrapped, response) ->
+                        address.set(resolver.resolve((jakarta.servlet.http.HttpServletRequest) wrapped)));
+        assertThat(address.get()).isEqualTo("203.0.113.20");
+    }
+
     private final ClientIpResolver resolver = new TrustedProxyClientIpResolver(List.of("10.0.0.0/24"), 8192, 32);
 
     @Test

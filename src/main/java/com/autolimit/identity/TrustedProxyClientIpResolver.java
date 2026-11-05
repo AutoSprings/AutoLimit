@@ -2,6 +2,7 @@ package com.autolimit.identity;
 
 import com.google.common.net.InetAddresses;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -57,12 +58,19 @@ public class TrustedProxyClientIpResolver implements ClientIpResolver {
 
         }
 
-        InetAddress peer = requestAddress(request.getRemoteAddr());
+        // Framework forwarding filters wrap the request, replacing the peer and
+        // hiding the original headers. Apply our trust policy to the transport
+        // request instead of trusting a previously interpreted client address.
+        HttpServletRequest transport = request;
+        while (transport instanceof HttpServletRequestWrapper wrapper) {
+            transport = (HttpServletRequest) wrapper.getRequest();
+        }
+        InetAddress peer = requestAddress(transport.getRemoteAddr());
         InetAddress client = peer;
 
         if (isTrusted(peer)) {
 
-            List<InetAddress> chain = readForwardedChain(request);
+            List<InetAddress> chain = readForwardedChain(transport);
 
             for (int i = chain.size() -1; i >= 0; i--) {
                 if (!isTrusted(client)) {

@@ -278,6 +278,13 @@ global quota. Independently constructed services have independent allowances.
 Redis and token/leaky buckets are not implemented. Application namespaces separate
 keys but do not provide distributed counters. Proxy headers are used only for configured
 `autolimit.trusted-proxies`; by default the socket peer supplies the client IP.
+With Spring's `server.forward-headers-strategy=framework`, AutoLimit unwraps
+servlet request wrappers and uses the original peer and X-Forwarded-For chain,
+so Spring's rewritten address cannot bypass AutoLimit's proxy trust rules.
+Container-native forwarding rewrites the request before servlet filters; use
+`server.forward-headers-strategy=none` or `framework` with the default resolver.
+Native forwarding requires an application-owned `ClientIpResolver` and a verified
+container/proxy trust configuration; AutoLimit cannot restore that original peer.
 AutoLimit contains no revocation store. Token revocation belongs to the
 authentication library and must retain active revocations until token expiry;
 this quota cache and its admission policy are not a revocation mechanism.
