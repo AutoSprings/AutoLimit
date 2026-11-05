@@ -24,6 +24,59 @@ class RateLimitServiceTest {
     private final RateLimitService service = new RateLimitService(ticker, 3);
 
     @Test
+    void retryDelayUsesOriginalBoundaryAndRoundsUpWithoutChargingRejectedAttempts() {
+        assertThat(service.check("user", 2, 2500).allowed()).isTrue();
+        ticker.advance(Duration.ofMillis(500));
+        assertThat(service.check("user", 2, 2500).allowed()).isTrue();
+        assertThat(service.check("user", 2, 2500).retryAfterSeconds()).hasValue(2);
+        ticker.advance(Duration.ofMillis(999));
+        assertThat(service.check("user", 2, 2500).retryAfterSeconds()).hasValue(2);
+        ticker.advance(Duration.ofMillis(1));
+        assertThat(service.check("user", 2, 2500).retryAfterSeconds()).hasValue(1);
+        ticker.advance(Duration.ofMillis(1000).minusNanos(1));
+        assertThat(service.check("user", 2, 2500).retryAfterSeconds()).hasValue(1);
+        ticker.advance(Duration.ofNanos(1));
+        var renewed = service.check("user", 2, 2500);
+        assertThat(renewed.allowed()).isTrue();
+        assertThat(renewed.retryAfterSeconds()).isEmpty();
+        assertThat(service.isAllowed("user", 2, 2500)).isTrue();
+        assertThat(service.check("user", 2, 2500).retryAfterSeconds()).hasValue(3);
+    }
+
+    @Test
+    void firstRequestAnchoredWindowsAllowBoundaryBurstsWithoutSlidingTheDeadline() {
+        assertThat(service.isAllowed("burst", 5, 60_000)).isTrue();
+        ticker.advance(Duration.ofSeconds(60).minusNanos(1));
+        for (int i = 0; i < 4; i++) assertThat(service.isAllowed("burst", 5, 60_000)).isTrue();
+        assertThat(service.check("burst", 5, 60_000).retryAfterSeconds()).hasValue(1);
+        ticker.advance(Duration.ofNanos(1));
+        for (int i = 0; i < 5; i++) assertThat(service.isAllowed("burst", 5, 60_000)).isTrue();
+        assertThat(service.check("burst", 5, 60_000).retryAfterSeconds()).hasValue(60);
+        // Nine requests were admitted across the boundary; this is not a rolling quota.
+    }
+
+    @Test
+    void capacityAndZeroQuotasHaveNoPromisedRetryDelay() {
+        var limiter = new RateLimitService(ticker, 1);
+        assertThat(limiter.check("zero", 0, 100).retryAfterSeconds()).isEmpty();
+        assertThat(limiter.check("zero", 0, 100).allowed()).isFalse();
+        assertThat(limiter.check("alice", 1, 100).allowed()).isTrue();
+        var capacity = limiter.check("bob", 1, 100);
+        assertThat(capacity.allowed()).isFalse();
+        assertThat(capacity.retryAfterSeconds()).isEmpty();
+        assertThat(limiter.check("alice", 1, 100).retryAfterSeconds()).hasValue(1);
+    }
+
+    @Test
+    void independentLimiterInstancesDoNotShareCounters() {
+        var other = new RateLimitService(ticker, 3);
+        assertThat(service.isAllowed("same-key", 1, 100)).isTrue();
+        assertThat(service.isAllowed("same-key", 1, 100)).isFalse();
+        assertThat(other.isAllowed("same-key", 1, 100)).isTrue();
+        assertThat(other.isAllowed("same-key", 1, 100)).isFalse();
+    }
+
+    @Test
     void hourlyQuotaSurvivesMoreThanFifteenMinutesIdle() {
         assertThat(service.isAllowed("hourly", 1, 3_600_000)).isTrue();
         ticker.advance(Duration.ofMinutes(16));
@@ -272,8 +325,11 @@ class RateLimitServiceTest {
                         }
                         int accepted = 0;
                         for (int request = 0; request < 32; request++) {
-                            if (service.isAllowed("user", 100, 60_000)) {
+                            var decision = service.check("user", 100, 60_000);
+                            if (decision.allowed()) {
                                 accepted++;
+                            } else {
+                                assertThat(decision.retryAfterSeconds()).hasValue(60);
                             }
                         }
                         return accepted;

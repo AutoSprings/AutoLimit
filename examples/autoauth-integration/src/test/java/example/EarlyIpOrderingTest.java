@@ -47,6 +47,6 @@ class EarlyIpOrderingTest {
         assertThat(rejected.getHeaders().getFirst("Retry-After")).isEqualTo("1");
         assertThat(rejected.getBody()).contains("IP rate limit exceeded");
         verify(validator, times(1)).validateAccessToken(token);
-        verify(limiter, times(1)).isAllowed(IntegrationTest.endpointKey("early"), 3, 60_000);
+        verify(limiter, times(1)).check(IntegrationTest.endpointKey("early"), 3, 60_000);
     }
 }

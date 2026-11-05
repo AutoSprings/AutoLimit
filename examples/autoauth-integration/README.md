@@ -51,3 +51,16 @@ Tests generate ephemeral RSA keys and JWTs. They verify separate user quotas,
 highest-role quotas, anonymous limiting, authentication, exactly one IP filter
 invocation per HTTP request, servlet registration outside the security chain,
 and early IP rejection before JWT validation and endpoint quota consumption.
+
+Both quota layers use fixed windows anchored to their first admitted request;
+later requests do not move the boundary. Requests can burst across a boundary.
+The early IP filter charges before authentication and URL authorization, including
+requests that later receive 401/403. Endpoint quotas charge only when the proxied
+handler is reached and are not refunded for errors or authorization failures
+inside the handler. Ordering relative to method-security advice is application
+configuration; AutoLimit does not establish it.
+
+Exhausted annotation windows return `Retry-After` rounded up to whole seconds;
+exhausted one-second IP windows return `Retry-After: 1`. Storage-capacity rejection
+and zero endpoint quotas omit the header because retry timing is unknown. There
+are no built-in IP-filter URL exclusions, including for `/private` or login routes.

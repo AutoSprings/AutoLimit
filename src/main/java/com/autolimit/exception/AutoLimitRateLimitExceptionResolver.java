@@ -17,10 +17,12 @@ public class AutoLimitRateLimitExceptionResolver implements HandlerExceptionReso
     @Override
     public ModelAndView resolveException(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
 
-        if (ex instanceof RateLimitExceededException) {
+        if (ex instanceof RateLimitExceededException exceeded) {
             try {
                 response.setContentType("application/json");
                 response.setStatus(429);
+                exceeded.getRetryAfterSeconds().ifPresent(seconds ->
+                        response.setHeader("Retry-After", Long.toString(seconds)));
                 response.getWriter().write("{\"error\": \"Too Many Requests\", \"message\": \"Rate limit exceeded. Please try again later.\"}");
                 response.getWriter().flush();
 

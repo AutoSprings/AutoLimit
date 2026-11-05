@@ -16,6 +16,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalLong;
 
 public class IpRateLimitFilter extends OncePerRequestFilter {
 
@@ -70,18 +71,19 @@ public class IpRateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (!rateLimitService.isAllowed(quotaKeys.preAuthIp(clientIp), maxRequestsPerWindow, 1_000)) {
-            rejectWith429(response);
+        var decision = rateLimitService.check(quotaKeys.preAuthIp(clientIp), maxRequestsPerWindow, 1_000);
+        if (!decision.allowed()) {
+            rejectWith429(response, decision.retryAfterSeconds());
             return;
         }
 
         filterChain.doFilter(request, response);
     }
 
-    private void rejectWith429(HttpServletResponse response) throws IOException {
+    private void rejectWith429(HttpServletResponse response, OptionalLong retryAfterSeconds) throws IOException {
         response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.setHeader("Retry-After", "1");
+        retryAfterSeconds.ifPresent(seconds -> response.setHeader("Retry-After", Long.toString(seconds)));
 
         response.getWriter().write("""
             {

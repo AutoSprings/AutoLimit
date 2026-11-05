@@ -24,6 +24,7 @@ class IpRateLimitFilterTest {
         var newIp = new MockHttpServletResponse();
         filter.doFilter(request("203.0.113.2", null), newIp, chain);
         assertThat(newIp.getStatus()).isEqualTo(429);
+        assertThat(newIp.getHeader("Retry-After")).isNull();
         verifyNoInteractions(chain);
         filter.doFilter(request("203.0.113.1", null), new MockHttpServletResponse(), chain);
         verify(chain).doFilter(any(), any());

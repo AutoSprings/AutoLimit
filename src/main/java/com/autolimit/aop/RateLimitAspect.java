@@ -127,11 +127,12 @@ public class RateLimitAspect {
         String cacheKey = quotaKeys.endpoint(targetClass, method, callerKey);
         long windowMillis = windowMillis(rateLimit.window(), rateLimit.unit());
 
-        boolean allowed = rateLimitService.isAllowed(cacheKey, maxRequests, windowMillis);
+        var decision = rateLimitService.check(cacheKey, maxRequests, windowMillis);
 
         // throw and return a 429 rate limit exceeded error
-        if (!allowed) {
-            throw new RateLimitExceededException("Rate Limit Exceeded. Please try again later.");
+        if (!decision.allowed()) {
+            throw new RateLimitExceededException("Rate Limit Exceeded. Please try again later.",
+                    decision.retryAfterSeconds());
         }
     }
 

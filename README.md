@@ -64,7 +64,11 @@ the same method share its quota. The highest matching role quota wins, ignoring 
 users without matching roles use `fallbackRequests` under their own user ID.
 
 Exhausted annotation quotas return JSON with HTTP 429, `error`, and `message`.
-The independent IP filter also returns JSON 429 and `Retry-After: 1`.
+When a quota window is exhausted, the response includes `Retry-After` with the
+remaining window duration rounded up to whole seconds. The independent IP filter
+also returns JSON 429, with `Retry-After: 1` for its exhausted one-second window.
+Zero quotas and storage-capacity rejections omit the header because there is no
+reliable retry time. See the request behavior below for charging and exclusions.
 
 ## Configuration
 
@@ -160,15 +164,77 @@ Add AutoLimit explicitly, change limiter imports from `com.autoauth` to
 the identity bridge above to enable authenticated quotas. AutoAuth alone no
 longer installs any limiter.
 
-## Current limits
+## Request behavior and exclusions
+
+The early IP filter applies to all URLs and HTTP methods on initial `REQUEST`
+dispatches, including public, login, health, static-resource, and unmapped URLs.
+There are no built-in path exclusions. It does not run again on asynchronous or
+error dispatches. Disabling `autolimit.ip-limit-enabled` disables only this filter;
+changing its URL coverage requires an application-owned filter registration or
+custom filter. An unannotated endpoint is still subject to the early IP filter.
+
+The IP filter charges one unit before calling the remaining servlet chain,
+including authentication and URL authorization at the default filter order.
+Later 401, 403, 404, or 5xx responses do not refund that unit. Invalid trusted
+proxy headers rejected during IP resolution do not consume an IP quota. If the
+IP quota rejects a request, the downstream chain and endpoint quota are skipped.
+
+Endpoint quotas charge immediately before the annotated method executes. A
+request rejected by upstream authentication, URL authorization, an interceptor,
+or argument binding before that invocation does not consume endpoint quota.
+Once admitted by the aspect, a request stays charged even if the method throws,
+returns an error, or rejects ownership/authorization inside its body. AutoLimit
+does not establish ordering relative to other method-level AOP advice, including
+Spring method security; the application's advisor order determines which check
+runs first. Configure and test that order in the consuming application.
+
+Only intercepted calls to annotated methods or classes receive endpoint quotas.
+Calls on objects constructed outside Spring, direct calls to the target, and
+self-invocation bypass the aspect. Private/static methods and final methods on
+class proxies cannot be intercepted. Annotations are not URL exclusions for the
+IP filter. Resolver failures propagate before endpoint quota consumption, but
+any earlier IP charge remains. Quota rejections themselves do not increase the
+counter, and no success-only charging or rollback is provided.
+
+## Fixed windows, bursts, and retry timing
 
 Counters use atomic per-key fixed windows, starting on the first admitted request.
 Active counters survive idle periods until their window boundary. Accepted and
-rejected attempts do not extend that boundary. Windows must convert exactly to
+rejected attempts do not extend that boundary. A window is anchored to the first
+admitted request for each key, not a wall-clock minute. After expiry, the next
+admitted request starts a new window; idle windows do not accumulate credits.
+
+This is a fixed-window admission limit, not a rolling-window rate, token bucket,
+leaky bucket, request pacing mechanism, or cap on simultaneous in-flight work.
+For example, with five requests per minute, admit one at t=0, four just before
+t=60 seconds, then five at t=60 seconds. Nine requests can pass close together
+across the boundary. For a constant quota N, the first-request anchor permits up
+to 2N-1 requests around that boundary, approaching twice the quota for large N.
+This burst behavior is intentional. Concurrent requests for the same key are
+serialized atomically: only the remaining quota is admitted, and an expired
+window is renewed once. Different keys have independent counters.
+
+The admission decision captures retry timing during that same atomic update.
+For a rejected active window, 1.001 seconds remaining yields `Retry-After: 2`;
+any positive subsecond remainder yields `Retry-After: 1`. This uses the HTTP
+[delay-seconds format](https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after).
+The delay is measured at rejection and is a retry hint, not a reservation or a
+promise of admission: another request may consume quota first. Zero quotas,
+capacity exhaustion, custom decisions with unknown timing, and exceptions
+created with the legacy message-only constructor omit `Retry-After`.
+
+Windows must convert exactly to
 whole milliseconds from 1 ms through 365 days. Zero, negative, fractional
 millisecond, oversized, and overflowing annotation durations throw
 `IllegalArgumentException` on invocation before consuming quota. Zero request
 quotas always deny without allocating state; negative quotas are invalid.
+
+The selected role/fallback request threshold is evaluated on every invocation.
+Changing that threshold changes the allowance against the existing count, while
+an active window keeps its original deadline. Use consistent window settings
+for a key; a new duration takes effect when a new window starts.
+
+## Storage and backend API
 
 `autolimit.max-tracked-keys` defaults to 100,000 and must be positive. It bounds
 the number of distinct tracked quota keys across both the IP filter and endpoint
@@ -185,6 +251,15 @@ windowMillis)` returns false for both quota and capacity exhaustion. Use
 consistent window settings for each key; an active window keeps its original
 deadline until expiry.
 
+`check(key, quota, windowMillis)` consumes at most one unit and returns a
+`RateLimitDecision` with `allowed()` and optional `retryAfterSeconds()`. Do not
+call both `check` and `isAllowed` for the same request: each consumes quota.
+`isAllowed` is a boolean wrapper around `check`. The aspect and IP filter now use
+`check`; custom `RateLimitService` subclasses/backends must override `check`
+rather than only `isAllowed`. Return `RateLimitDecision.permit()`, `deny()`, or
+`deny(positiveSeconds)`; the backend must compute the decision and retry timing
+atomically. No distributed adapter is supplied or certified by this library.
+
 Manually constructed aspects and filters retain their existing constructors,
 which use namespace `default`. To share a limiter between applications, use
 `new RateLimitAspect(limiter, identityResolver, clientIpResolver, "catalog")` and
@@ -194,7 +269,12 @@ Separate bean instances with the same concrete class and method share endpoint
 quotas within a namespace; bean-name isolation and explicit shared policy IDs are
 not supported.
 
-Counters are per process, reset on restart, and are not shared between instances.
+Counters are local to each `RateLimitService` instance, reset on restart, and are
+not shared between processes. Boot normally supplies one service per application
+context. A shared service's storage capacity applies across namespaces, but each
+namespaced quota has its own counter. Multiple replicas each have their own
+allowance; adding replicas can increase aggregate admissions, without creating a
+global quota. Independently constructed services have independent allowances.
 Redis and token/leaky buckets are not implemented. Application namespaces separate
 keys but do not provide distributed counters. Proxy headers are used only for configured
 `autolimit.trusted-proxies`; by default the socket peer supplies the client IP.
