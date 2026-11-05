@@ -8,6 +8,8 @@ import com.github.benmanes.caffeine.cache.Ticker;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.PriorityQueue;
+import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -22,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 public class RateLimitService {
 
     private record Window(long count, long endsAtNanos) {}
+    private record Deadline(String key, long endsAtNanos) {}
     private final Ticker ticker;
 
     private final Cache<String, Window> cache;
@@ -32,6 +35,9 @@ public class RateLimitService {
     private final Object admissionLock = new Object();
     // Guarded by admissionLock; cache size can include entries awaiting expiration maintenance.
     private final Set<String> trackedKeys = new HashSet<>();
+    // One entry per tracked key, guarded by admissionLock. A renewed window can
+    // leave an earlier deadline here; reclamation refreshes it atomically.
+    private final PriorityQueue<Deadline> deadlines;
 
     /** Creates a limiter with capacity for 100,000 distinct quota keys. */
     public RateLimitService() {
@@ -48,6 +54,11 @@ public class RateLimitService {
 
     RateLimitService(Ticker ticker, int maxTrackedKeys) {
         this.ticker = Objects.requireNonNull(ticker);
+        long clockOrigin = ticker.read();
+        // Normalize to the service's clock origin so crossing nanoTime's signed
+        // boundary does not reorder deadlines within the supported window range.
+        this.deadlines = new PriorityQueue<>(Comparator.comparingLong(
+                deadline -> deadline.endsAtNanos() - clockOrigin));
 
         if (maxTrackedKeys < 1) {
             throw new IllegalArgumentException("maxTrackedKeys must be greater than 0");
@@ -143,19 +154,35 @@ public class RateLimitService {
         // All insertions share this lock so distinct keys cannot claim the same free slot.
         synchronized (admissionLock) {
             if (!trackedKeys.contains(key) && trackedKeys.size() >= maxTrackedKeys) {
-                // Coordinate expiry checks with quota updates for each key. A separate
-                // read followed by invalidate could delete a concurrently renewed window.
-                trackedKeys.removeIf(trackedKey -> cache.asMap().computeIfPresent(trackedKey,
-                        (k, current) -> remaining(current, ticker.read()) > 0 ? current : null) == null);
+                reclaimExpiredSlot();
                 if (trackedKeys.size() >= maxTrackedKeys) {
                     return RateLimitDecision.deny();
                 }
             }
 
-            cache.asMap().compute(key,
+            Window window = cache.asMap().compute(key,
                     (k, existing) -> consume(existing, maxRequests, windowNanos, decision));
-            trackedKeys.add(key);
+            if (trackedKeys.add(key)) {
+                deadlines.add(new Deadline(key, window.endsAtNanos()));
+            }
             return decision[0];
+        }
+    }
+
+    // Called only under admissionLock. Stop as soon as a slot is available;
+    // when every indexed deadline is in the future, denial is constant work.
+    private void reclaimExpiredSlot() {
+        while (trackedKeys.size() >= maxTrackedKeys && !deadlines.isEmpty()
+                && ticker.read() - deadlines.peek().endsAtNanos() >= 0) {
+            Deadline expired = deadlines.remove();
+            // The per-key update coordinates with concurrent admissions/renewals.
+            Window current = cache.asMap().computeIfPresent(expired.key(),
+                    (key, window) -> remaining(window, ticker.read()) > 0 ? window : null);
+            if (current == null) {
+                trackedKeys.remove(expired.key());
+            } else {
+                deadlines.add(new Deadline(expired.key(), current.endsAtNanos()));
+            }
         }
     }
 

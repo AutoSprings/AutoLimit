@@ -247,8 +247,13 @@ the number of distinct tracked quota keys across both the IP filter and endpoint
 quotas. At capacity, expired keys are reclaimed; if all slots are active, new keys
 are denied (HTTP 429) while existing keys retain their counters and allowances.
 Active quotas are never evicted to admit another identity. Long windows can
-therefore keep new identities blocked until a slot expires. Reclaiming capacity
-may scan all tracked keys, so choose capacity and windows for your traffic.
+therefore keep new identities blocked until a slot expires. A bounded deadline
+index reclaims expired slots without scanning all active keys on every rejection.
+Reclamation stops once a slot is free. Renewed windows can leave stale earlier
+deadlines; these are checked atomically and refreshed without evicting active
+quotas. The index retains at most one record per tracked key. Reclamation can
+process multiple expired or stale records, so choose capacity and windows for
+your traffic; saturation with only future deadlines requires constant work.
 This is a key-count bound, not a byte limit; key lengths also affect memory use.
 
 For direct Java usage, `new RateLimitService()` uses the default capacity and

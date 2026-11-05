@@ -24,6 +24,73 @@ class RateLimitServiceTest {
     private final RateLimitService service = new RateLimitService(ticker, 3);
 
     @Test
+    void fullStorageDoesNotScanAllActiveKeysForEachNewIdentity() {
+        var clockReads = new AtomicLong();
+        Ticker countedClock = () -> { clockReads.incrementAndGet(); return ticker.read(); };
+        var limiter = new RateLimitService(countedClock, 4096);
+        for (int i = 0; i < 4096; i++) assertThat(limiter.isAllowed("active-" + i, 1, 60_000)).isTrue();
+        clockReads.set(0);
+        for (int i = 0; i < 32; i++) assertThat(limiter.isAllowed("new-" + i, 1, 60_000)).isFalse();
+        // A scan would inspect at least 4096 clocks on every rejection. This bound
+        // allows Caffeine's internal reads while asserting work independent of key count.
+        assertThat(clockReads.get()).isLessThan(4096);
+    }
+
+    @Test
+    void staleDeadlinesDoNotEvictRenewedWindowsOrHideOtherExpiredSlots() {
+        var limiter = new RateLimitService(ticker, 2);
+        assertThat(limiter.isAllowed("renewed", 1, 10)).isTrue();
+        assertThat(limiter.isAllowed("expired", 1, 20)).isTrue();
+        ticker.advance(Duration.ofMillis(10));
+        assertThat(limiter.isAllowed("renewed", 1, 100)).isTrue();
+        assertThat(limiter.isAllowed("new", 1, 100)).isFalse();
+        ticker.advance(Duration.ofMillis(10));
+        assertThat(limiter.isAllowed("new", 1, 100)).isTrue();
+        assertThat(limiter.isAllowed("renewed", 1, 100)).isFalse();
+        assertThat(limiter.isAllowed("extra", 1, 100)).isFalse();
+        assertThat(((java.util.Collection<?>) ReflectionTestUtils.getField(limiter, "deadlines")))
+                .hasSize(2);
+    }
+
+    @Test
+    void expiryIndexOrdersWindowsAcrossSignedClockWrap() {
+        ticker.nanos.set(Long.MAX_VALUE - TimeUnit.MILLISECONDS.toNanos(5));
+        var limiter = new RateLimitService(ticker, 2);
+        assertThat(limiter.isAllowed("short", 1, 10)).isTrue();
+        assertThat(limiter.isAllowed("long", 1, 20)).isTrue();
+        ticker.advance(Duration.ofMillis(10));
+        assertThat(limiter.isAllowed("new", 1, 100)).isTrue();
+        assertThat(limiter.isAllowed("long", 1, 20)).isFalse();
+    }
+
+    @Test
+    void concurrentRenewalAndReclamationCannotClaimTheSameCapacitySlot() throws Exception {
+        var limiter = new RateLimitService(ticker, 1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            for (int round = 0; round < 100; round++) {
+                ticker.advance(Duration.ofMillis(100));
+                assertThat(limiter.isAllowed("renewed", 1, 10)).isTrue();
+                ticker.advance(Duration.ofMillis(10));
+                var start = new CountDownLatch(1);
+                var renewal = executor.submit(() -> {
+                    if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("No start signal");
+                    return limiter.isAllowed("renewed", 1, 100);
+                });
+                var newcomer = executor.submit(() -> {
+                    if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("No start signal");
+                    return limiter.isAllowed("new", 1, 100);
+                });
+                start.countDown();
+                int accepted = (renewal.get(10, TimeUnit.SECONDS) ? 1 : 0)
+                        + (newcomer.get(10, TimeUnit.SECONDS) ? 1 : 0);
+                assertThat(accepted).isEqualTo(1);
+                assertThat(limiter.isAllowed("renewed", 1, 100)).isFalse();
+                assertThat(limiter.isAllowed("new", 1, 100)).isFalse();
+            }
+        }
+    }
+
+    @Test
     void retryDelayUsesOriginalBoundaryAndRoundsUpWithoutChargingRejectedAttempts() {
         assertThat(service.check("user", 2, 2500).allowed()).isTrue();
         ticker.advance(Duration.ofMillis(500));
