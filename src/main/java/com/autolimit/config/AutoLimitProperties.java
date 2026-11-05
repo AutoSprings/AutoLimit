@@ -12,7 +12,8 @@ public class AutoLimitProperties {
     private int maxForwardedHeaderChars = 8192;
     private int maxForwardedHops = 32;
 
-    private int maxTrackedKeys = 100000;
+    /** Capacity shared by IP-filter and endpoint quota keys; new keys fail closed when full. */
+    private int maxTrackedKeys = 100_000;
 
     private boolean ipLimitEnabled = true;
     private int preAuthRateLimit = 50;

@@ -35,6 +35,12 @@ ENTERPRISE gets four, and other authenticated users get two per user. `GET
 /private` requires authentication. The application supplies the resolver bridge
 using `AuthContext`; the two libraries remain independent.
 
+Set `autolimit.max-tracked-keys` (default 100,000; must be positive) to bound the
+combined IP-filter and endpoint quota keys. When all slots have active windows,
+new keys receive HTTP 429 until capacity expires; active quotas are retained.
+Annotation windows must convert exactly to whole milliseconds between 1 ms and
+365 days. Authentication token revocation is managed separately by AutoAuth.
+
 Tests generate ephemeral RSA keys and JWTs. They verify separate user quotas,
 highest-role quotas, anonymous limiting, authentication, exactly one IP filter
 invocation per HTTP request, servlet registration outside the security chain,

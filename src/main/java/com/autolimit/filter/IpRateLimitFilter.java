@@ -2,8 +2,7 @@ package com.autolimit.filter;
 
 import com.autolimit.identity.ClientIpResolver;
 import com.autolimit.identity.TrustedProxyClientIpResolver;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
+import com.autolimit.ratelimit.RateLimitService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,26 +13,27 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
-import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Objects;
 
 public class IpRateLimitFilter extends OncePerRequestFilter {
 
     private final int maxRequestsPerWindow;
-    private final Cache<String, AtomicInteger> ipRequestCounts;
+    private final RateLimitService rateLimitService;
     private final ClientIpResolver clientIpResolver;
 
     public IpRateLimitFilter(int maxRequestsPerSecond, ClientIpResolver clientIpResolver) {
+        this(maxRequestsPerSecond, clientIpResolver, new RateLimitService());
+    }
 
-        this.clientIpResolver = clientIpResolver;
-
+    public IpRateLimitFilter(int maxRequestsPerSecond, ClientIpResolver clientIpResolver,
+                             RateLimitService rateLimitService) {
+        if (maxRequestsPerSecond < 1) {
+            throw new IllegalArgumentException("maxRequestsPerSecond must be positive");
+        }
+        this.clientIpResolver = Objects.requireNonNull(clientIpResolver);
+        this.rateLimitService = Objects.requireNonNull(rateLimitService);
         this.maxRequestsPerWindow = maxRequestsPerSecond;
-
-        this.ipRequestCounts = Caffeine.newBuilder()
-                .expireAfterWrite(Duration.ofSeconds(1))
-                .maximumSize(50_000)
-                .build();
     }
 
 
@@ -61,9 +61,7 @@ public class IpRateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        AtomicInteger counter = ipRequestCounts.get(clientIp, k -> new AtomicInteger(0));
-
-        if (counter.incrementAndGet() > maxRequestsPerWindow) {
+        if (!rateLimitService.isAllowed("preauth:ip:" + clientIp, maxRequestsPerWindow, 1_000)) {
             rejectWith429(response);
             return;
         }
@@ -85,11 +83,4 @@ public class IpRateLimitFilter extends OncePerRequestFilter {
             """);
     }
 
-    private String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
-    }
 }

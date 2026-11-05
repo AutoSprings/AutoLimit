@@ -22,6 +22,7 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Aspect that intercepts methods or classes annotated with {@link RateLimit}.
@@ -111,7 +112,7 @@ public class RateLimitAspect {
         }
 
         String cacheKey = callerKey + ":" + methodName;
-        long windowMillis = rateLimit.unit().toMillis(rateLimit.window());
+        long windowMillis = windowMillis(rateLimit.window(), rateLimit.unit());
 
         boolean allowed = rateLimitService.isAllowed(cacheKey, maxRequests, windowMillis);
 
@@ -119,5 +120,17 @@ public class RateLimitAspect {
         if (!allowed) {
             throw new RateLimitExceededException("Rate Limit Exceeded. Please try again later.");
         }
+    }
+
+    static long windowMillis(long window, TimeUnit unit) {
+        long millis = unit.toMillis(window);
+        // TimeUnit saturates on overflow and truncates sub-millisecond values.
+        // Reject both instead of silently changing the configured quota window.
+        if (window <= 0 || millis < 1 || millis > TimeUnit.DAYS.toMillis(365)
+                || unit.convert(millis, TimeUnit.MILLISECONDS) != window) {
+            throw new IllegalArgumentException(
+                    "RateLimit window must be an exact number of milliseconds between 1 ms and 365 days");
+        }
+        return millis;
     }
 }

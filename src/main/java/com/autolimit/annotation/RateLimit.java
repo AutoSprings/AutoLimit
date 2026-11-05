@@ -62,6 +62,11 @@ public @interface RateLimit {
 
     int fallbackRequests() default 5;
 
+    /**
+     * Positive fixed-window duration in {@link #unit()}. Must convert exactly to
+     * whole milliseconds from 1 ms through 365 days; invalid values fail on invocation.
+     * @return window duration
+     */
     long window() default 1;
 
     TimeUnit unit() default TimeUnit.MINUTES;
