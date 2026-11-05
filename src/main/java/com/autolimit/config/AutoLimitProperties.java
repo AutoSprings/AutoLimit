@@ -12,6 +12,9 @@ public class AutoLimitProperties {
     private int maxForwardedHeaderChars = 8192;
     private int maxForwardedHops = 32;
 
+    /** Capacity shared by IP-filter and endpoint quota keys; new keys fail closed when full. */
+    private int maxTrackedKeys = 100_000;
+
     private boolean ipLimitEnabled = true;
     private int preAuthRateLimit = 50;
     // Spring Boot's default security filter order is -100.
@@ -50,4 +53,14 @@ public class AutoLimitProperties {
     public void setMaxForwardedHops(int value) {
         this.maxForwardedHops = value;
     }
+
+    public int getMaxTrackedKeys(){return maxTrackedKeys;}
+
+    public void setMaxTrackedKeys(int maxTrackedKeys) {
+        if(maxTrackedKeys < 1) {
+            throw new IllegalArgumentException("max-tracked-keys must be positive");
+        }
+        this.maxTrackedKeys = maxTrackedKeys;
+    }
+
 }

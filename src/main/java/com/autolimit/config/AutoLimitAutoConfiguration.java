@@ -27,7 +27,9 @@ import java.util.Optional;
 public class AutoLimitAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
-    public RateLimitService rateLimitService() { return new RateLimitService(); }
+    public RateLimitService rateLimitService(AutoLimitProperties properties){
+        return new RateLimitService(properties.getMaxTrackedKeys());
+    }
 
     @Bean
     @ConditionalOnMissingBean(CallerIdentityResolver.class)
@@ -50,8 +52,9 @@ public class AutoLimitAutoConfiguration {
     static class IpFilterConfiguration {
         @Bean
         @ConditionalOnMissingBean
-        IpRateLimitFilter ipRateLimitFilter(AutoLimitProperties properties, ClientIpResolver clientIpResolver) {
-            return new IpRateLimitFilter(properties.getPreAuthRateLimit(), clientIpResolver);
+        IpRateLimitFilter ipRateLimitFilter(AutoLimitProperties properties, ClientIpResolver clientIpResolver,
+                                           RateLimitService rateLimitService) {
+            return new IpRateLimitFilter(properties.getPreAuthRateLimit(), clientIpResolver, rateLimitService);
         }
 
         @Bean

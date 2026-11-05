@@ -67,6 +67,7 @@ autolimit:
   pre-auth-rate-limit: 50 # requests per IP per one-second window; must be positive
   ip-limit-enabled: true # false disables only the early IP filter
   ip-filter-order: -110  # before Boot's default Spring Security order of -100
+  max-tracked-keys: 100000 # positive capacity shared by IP-filter and endpoint keys
 ```
 
 The IP filter applies to all request URLs, including authenticated requests,
@@ -145,13 +146,36 @@ longer installs any limiter.
 
 ## Current limits
 
-This extraction retains the original in-memory fixed-window implementation.
-Counters are per process, not shared between instances; Redis and token/leaky
-buckets are not implemented. Existing concerns include non-atomic endpoint
-counters under concurrency, method-name key collisions across controllers, and
-15-minute idle eviction for longer annotation windows. Both IP paths currently
-trust the first `X-Forwarded-For` value; a trusted proxy must sanitize that header.
-These behaviors were not redesigned as part of the repository split.
+Counters use atomic per-key fixed windows, starting on the first admitted request.
+Active counters survive idle periods until their window boundary. Accepted and
+rejected attempts do not extend that boundary. Windows must convert exactly to
+whole milliseconds from 1 ms through 365 days. Zero, negative, fractional
+millisecond, oversized, and overflowing annotation durations throw
+`IllegalArgumentException` on invocation before consuming quota. Zero request
+quotas always deny without allocating state; negative quotas are invalid.
+
+`autolimit.max-tracked-keys` defaults to 100,000 and must be positive. It bounds
+the number of distinct tracked quota keys across both the IP filter and endpoint
+quotas. At capacity, expired keys are reclaimed; if all slots are active, new keys
+are denied (HTTP 429) while existing keys retain their counters and allowances.
+Active quotas are never evicted to admit another identity. Long windows can
+therefore keep new identities blocked until a slot expires. Reclaiming capacity
+may scan all tracked keys, so choose capacity and windows for your traffic.
+This is a key-count bound, not a byte limit; key lengths also affect memory use.
+
+For direct Java usage, `new RateLimitService()` uses the default capacity and
+`new RateLimitService(10_000)` sets it explicitly. `isAllowed(key, quota,
+windowMillis)` returns false for both quota and capacity exhaustion. Use
+consistent window settings for each key; an active window keeps its original
+deadline until expiry.
+
+Counters are per process, reset on restart, and are not shared between instances.
+Redis and token/leaky buckets are not implemented. Method-name key collisions
+across controllers remain a limitation. Proxy headers are used only for configured
+`autolimit.trusted-proxies`; by default the socket peer supplies the client IP.
+AutoLimit contains no revocation store. Token revocation belongs to the
+authentication library and must retain active revocations until token expiry;
+this quota cache and its admission policy are not a revocation mechanism.
 
 ## Attribution
 

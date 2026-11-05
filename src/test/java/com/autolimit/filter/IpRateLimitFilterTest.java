@@ -2,6 +2,7 @@ package com.autolimit.filter;
 
 import jakarta.servlet.FilterChain;
 import com.autolimit.identity.TrustedProxyClientIpResolver;
+import com.autolimit.ratelimit.RateLimitService;
 import java.util.List;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -13,6 +14,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 class IpRateLimitFilterTest {
+    @Test
+    void capacityRejectsNewIpsWithoutForgettingActiveQuotas() throws Exception {
+        var limiter = new RateLimitService(1);
+        var filter = new IpRateLimitFilter(2, request -> request.getRemoteAddr(), limiter);
+        var chain = mock(FilterChain.class);
+        filter.doFilter(request("203.0.113.1", null), new MockHttpServletResponse(), chain);
+        clearInvocations(chain);
+        var newIp = new MockHttpServletResponse();
+        filter.doFilter(request("203.0.113.2", null), newIp, chain);
+        assertThat(newIp.getStatus()).isEqualTo(429);
+        verifyNoInteractions(chain);
+        filter.doFilter(request("203.0.113.1", null), new MockHttpServletResponse(), chain);
+        verify(chain).doFilter(any(), any());
+        clearInvocations(chain);
+        var exhausted = new MockHttpServletResponse();
+        filter.doFilter(request("203.0.113.1", null), exhausted, chain);
+        assertThat(exhausted.getStatus()).isEqualTo(429);
+        assertThat(limiter.isAllowed("ip:203.0.113.1:endpoint", 1, 60_000)).isFalse();
+        verifyNoInteractions(chain);
+    }
+
     @Test
     void allowsRequestsUpToQuotaThenReturns429() throws Exception {
         IpRateLimitFilter filter = new IpRateLimitFilter(1);

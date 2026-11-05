@@ -46,6 +46,7 @@ class AutoLimitConfigurationTest {
                     .hasSingleBean(AutoLimitRateLimitExceptionResolver.class).hasSingleBean(IpRateLimitFilter.class);
             assertThat(context.getBean(CallerIdentityResolver.class).resolve()).isEmpty();
             assertThat(context.getBean(AutoLimitProperties.class).getPreAuthRateLimit()).isEqualTo(50);
+            assertThat(context.getBean(AutoLimitProperties.class).getMaxTrackedKeys()).isEqualTo(100_000);
             assertThat(context.getBean(AutoLimitProperties.class).isIpLimitEnabled()).isTrue();
             assertThatThrownBy(() -> Class.forName("org.springframework.security.core.Authentication"))
                     .isInstanceOf(ClassNotFoundException.class);
@@ -134,7 +135,7 @@ class AutoLimitConfigurationTest {
 
     @Test
     void respectsApplicationProvidedServiceAspectResolverHandlerAndFilter() {
-        RateLimitService limiter = new RateLimitService();
+        RateLimitService limiter = new RateLimitService(3);
         CallerIdentityResolver resolver = Optional::empty;
         RateLimitAspect aspect = new RateLimitAspect(limiter, resolver,
                 new TrustedProxyClientIpResolver(List.of(), 8192, 32));
@@ -178,6 +179,42 @@ class AutoLimitConfigurationTest {
                 assertThat(context).hasNotFailed().doesNotHaveBean(IpRateLimitFilter.class)
                         .doesNotHaveBean(FilterRegistrationBean.class).hasSingleBean(RateLimitAspect.class));
         runner.withPropertyValues("autolimit.pre-auth-rate-limit=0").run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void configuredCapacityIsEnforcedByTheAutoConfiguredService() {
+        runner.withPropertyValues("autolimit.max-tracked-keys=1").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBean(AutoLimitProperties.class).getMaxTrackedKeys()).isEqualTo(1);
+            var limiter = context.getBean(RateLimitService.class);
+            assertThat(limiter.isAllowed("alice", 2, 60_000)).isTrue();
+            assertThat(limiter.isAllowed("bob", 2, 60_000)).isFalse();
+            assertThat(limiter.isAllowed("alice", 2, 60_000)).isTrue();
+            assertThat(limiter.isAllowed("alice", 2, 60_000)).isFalse();
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, -1})
+    void invalidCapacityFailsStartup(int capacity) {
+        runner.withPropertyValues("autolimit.max-tracked-keys=" + capacity)
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void autoConfiguredIpFilterSharesTheConfiguredCapacityWithEndpointQuotas() {
+        runner.withPropertyValues("autolimit.max-tracked-keys=1").run(context -> {
+            var limiter = context.getBean(RateLimitService.class);
+            assertThat(limiter.isAllowed("endpoint", 2, 60_000)).isTrue();
+            var request = new org.springframework.mock.web.MockHttpServletRequest();
+            request.setRemoteAddr("203.0.113.1");
+            var response = new org.springframework.mock.web.MockHttpServletResponse();
+            context.getBean(IpRateLimitFilter.class).doFilter(request, response,
+                    (ignoredRequest, ignoredResponse) -> { throw new AssertionError("Capacity must deny"); });
+            assertThat(response.getStatus()).isEqualTo(429);
+            assertThat(limiter.isAllowed("endpoint", 2, 60_000)).isTrue();
+            assertThat(limiter.isAllowed("endpoint", 2, 60_000)).isFalse();
+        });
     }
 
     @Configuration(proxyBeanMethods = false)

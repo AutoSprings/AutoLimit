@@ -42,6 +42,41 @@ class RateLimitAspectTest {
     }
 
     @Test
+    void convertsSupportedDurationsExactlyForEveryUnit() {
+        for (TimeUnit unit : TimeUnit.values()) {
+            long oneSecond = unit.convert(1, TimeUnit.SECONDS);
+            if (oneSecond > 0) {
+                assertThat(RateLimitAspect.windowMillis(oneSecond, unit)).isEqualTo(1000);
+            }
+            long year = unit.convert(365, TimeUnit.DAYS);
+            assertThat(RateLimitAspect.windowMillis(year, unit)).isEqualTo(31_536_000_000L);
+        }
+        assertThat(RateLimitAspect.windowMillis(1, TimeUnit.MILLISECONDS)).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsOverflowNonpositiveAndOutOfRangeDurationsForEveryUnit() {
+        for (TimeUnit unit : TimeUnit.values()) {
+            for (long invalid : new long[] {-1, 0, Long.MAX_VALUE, unit.convert(366, TimeUnit.DAYS)}) {
+                assertThatThrownBy(() -> RateLimitAspect.windowMillis(invalid, unit))
+                        .isInstanceOf(IllegalArgumentException.class);
+            }
+        }
+        for (long invalid : new long[] {1, 999, 1001}) {
+            assertThatThrownBy(() -> RateLimitAspect.windowMillis(invalid, TimeUnit.MICROSECONDS))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> RateLimitAspect.windowMillis(1_000_001, TimeUnit.NANOSECONDS))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void invalidAnnotationDurationFailsBeforeQuotaConsumption() {
+        assertThatThrownBy(service::invalidWindow).isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(limiter);
+    }
+
+    @Test
     void choosesHighestMatchingRoleQuotaCaseInsensitively() {
         resolveCaller("alice", "premium", "ENTERPRISE");
         when(limiter.isAllowed("user:alice:tiered", 20, 30_000)).thenReturn(true);
@@ -142,6 +177,8 @@ class RateLimitAspectTest {
                 fallbackRequests = 2, window = 30, unit = TimeUnit.SECONDS)
         public String tiered() { return "ok"; }
         public void classLimited() {}
+        @RateLimit(window = Long.MAX_VALUE, unit = TimeUnit.DAYS)
+        public void invalidWindow() { throw new AssertionError("Invalid endpoint was invoked"); }
         @RateLimit(fallbackRequests = 1) public void override() {}
     }
 }
