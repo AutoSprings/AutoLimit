@@ -51,6 +51,12 @@ The default annotation window is one minute; customize `window` and `unit`
 (`java.util.concurrent.TimeUnit`). Class annotations apply to all intercepted
 methods; method annotations override class defaults. Like other Spring AOP
 features, interception requires calls through the Spring proxy.
+Interface method annotations, inherited class defaults, overridden methods, and
+methods inherited by an annotated subclass are resolved using Spring's annotation
+hierarchy search. Method annotations take precedence over class defaults.
+`RateLimitAspect` retains its bean name/type and constructors but now implements a
+Spring advisor with an annotation-aware method matcher. Manually assembled proxy
+factories must register it with `addAdvisor(...)` rather than `addAspect(...)`.
 
 Without an identity resolver, all callers use IP quotas. With a resolver,
 authenticated callers use `user:<userId>` and anonymous callers use `ip:<clientIp>`.

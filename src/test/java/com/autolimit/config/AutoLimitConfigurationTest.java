@@ -40,6 +40,30 @@ class AutoLimitConfigurationTest {
             .withUserConfiguration(WebConfig.class);
 
     @Test
+    void interfaceAnnotationsAreEnforcedThroughBootDiscoveryWithoutProxyingUnrelatedBeans() {
+        runner.withBean(InterfaceRoutes.class, InterfaceRoutes::new)
+                .withBean(UnrelatedFinalBean.class, UnrelatedFinalBean::new).run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(org.springframework.aop.support.AopUtils.isAopProxy(
+                            context.getBean(UnrelatedFinalBean.class))).isFalse();
+                    MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).build();
+                    mvc.perform(get("/interface-limit")).andExpect(status().isOk());
+                    mvc.perform(get("/interface-limit")).andExpect(status().isTooManyRequests());
+                });
+    }
+
+    public static final class UnrelatedFinalBean {}
+    @RestController
+    public interface LimitedApi {
+        @RateLimit(fallbackRequests = 1)
+        @GetMapping("/interface-limit") String limited();
+    }
+    @RestController
+    public static class InterfaceRoutes implements LimitedApi {
+        public String limited() { return "ok"; }
+    }
+
+    @Test
     void startsWithoutAuthKeysOrSecurityAndBindsDefaults() {
         runner.run(context -> {
             assertThat(context).hasNotFailed().hasSingleBean(RateLimitService.class)

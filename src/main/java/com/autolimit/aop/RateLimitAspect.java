@@ -8,11 +8,11 @@ import com.autolimit.ratelimit.RateLimitService;
 import com.autolimit.ratelimit.QuotaKeyFactory;
 
 import org.aspectj.lang.JoinPoint;
-import org.aspectj.lang.annotation.Aspect;
-import org.aspectj.lang.annotation.Before;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.aop.support.AopUtils;
+import org.springframework.aop.support.StaticMethodMatcherPointcutAdvisor;
+import org.aopalliance.intercept.MethodInterceptor;
 import org.springframework.util.ClassUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -30,8 +30,7 @@ import java.util.concurrent.TimeUnit;
  * Aspect that intercepts methods or classes annotated with {@link RateLimit}.
  * Resolves the calling user or IP address and delegates rate checking to {@link RateLimitService}.
  */
-@Aspect
-public class RateLimitAspect {
+public class RateLimitAspect extends StaticMethodMatcherPointcutAdvisor {
 
     private final RateLimitService rateLimitService;
     private final CallerIdentityResolver identityResolver;
@@ -52,6 +51,16 @@ public class RateLimitAspect {
         this.identityResolver = identityResolver;
         this.clientIpResolver = clientIpResolver;
         this.quotaKeys = new QuotaKeyFactory(namespace);
+        setAdvice((MethodInterceptor) invocation -> {
+            Class<?> targetClass = ClassUtils.getUserClass(invocation.getThis());
+            checkMethod(invocation.getMethod(), targetClass);
+            return invocation.proceed();
+        });
+    }
+
+    @Override
+    public boolean matches(Method method, Class<?> targetClass) {
+        return findRateLimit(method, ClassUtils.getUserClass(targetClass)) != null;
     }
 
     /**
@@ -60,23 +69,30 @@ public class RateLimitAspect {
      *
      * @param joinPoint metadata of the intercepted method
      */
-    @Before("@within(com.autolimit.annotation.RateLimit) || @annotation(com.autolimit.annotation.RateLimit)")
     public void checkRateLimit(JoinPoint joinPoint) {
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
         Class<?> targetClass = ClassUtils.getUserClass(joinPoint.getTarget());
-        Method method = AopUtils.getMostSpecificMethod(signature.getMethod(), targetClass);
+        checkMethod(signature.getMethod(), targetClass);
+    }
 
-        RateLimit annotation = AnnotatedElementUtils.findMergedAnnotation(method, RateLimit.class);
+    private static RateLimit findRateLimit(Method method, Class<?> targetClass) {
+        Method specificMethod = AopUtils.getMostSpecificMethod(method, targetClass);
+        RateLimit annotation = AnnotatedElementUtils.findMergedAnnotation(specificMethod, RateLimit.class);
         if (annotation == null) {
-            annotation = AnnotatedElementUtils.findMergedAnnotation(signature.getMethod(), RateLimit.class);
+            annotation = AnnotatedElementUtils.findMergedAnnotation(method, RateLimit.class);
         }
         if (annotation == null) {
             annotation = AnnotatedElementUtils.findMergedAnnotation(targetClass, RateLimit.class);
         }
 
+        return annotation;
+    }
+
+    private void checkMethod(Method method, Class<?> targetClass) {
+        RateLimit annotation = findRateLimit(method, targetClass);
         if (annotation != null) {
             // pass context of user and method to rate limiter
-            enforceLimit(annotation, targetClass, method);
+            enforceLimit(annotation, targetClass, AopUtils.getMostSpecificMethod(method, targetClass));
         }
     }
 
