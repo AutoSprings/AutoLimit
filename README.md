@@ -116,6 +116,10 @@ Applications may override `RateLimitService`, `RateLimitAspect`,
 `IpRateLimitFilter` by supplying a bean of that type. To own servlet registration,
 provide a `FilterRegistrationBean<IpRateLimitFilter>` named
 `autoLimitIpFilterRegistration` referencing the application's filter bean.
+When AutoLimit owns registration, `ip-limit-enabled=false` also disables an
+application-provided filter bean by installing a disabled registration, preventing
+Boot's automatic fallback registration. An application-owned registration remains
+the application's responsibility, including whether it is enabled.
 
 ## Authenticated identity
 
