@@ -23,8 +23,17 @@ dependencies { implementation 'com.autolimit:autolimit:1.0.0-SNAPSHOT' }
 
 Spring Boot discovers `AutoLimitAutoConfiguration` from its auto-configuration
 imports metadata. No enable annotation, component scan, or authentication setup
-is needed. The library uses the same Spring Boot 3.2.4 dependency baseline as its
-source project.
+is needed. The library uses the Spring Boot 3.5.16 dependency baseline, with the
+embedded Tomcat modules constrained to at least 10.1.61. Caffeine is managed by
+the Boot BOM. Consuming applications should inspect their resolved dependency
+graph when supplying their own platform or version overrides.
+
+Boot 3.5.16 is the final public Boot 3 release and is no longer under open-source
+support. This baseline updates the previously flagged Spring/Tomcat versions
+while retaining Boot 3 compatibility; it does not promise ongoing security
+maintenance. A supported Boot 4 migration or commercial Boot 3 support is still
+needed for continued upstream fixes. See the
+[Boot release notice](https://spring.io/blog/2026/06/25/spring-boot-3-5-16-available-now/).
 
 ## Standalone usage
 

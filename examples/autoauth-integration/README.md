@@ -5,11 +5,12 @@ libraries. Composite builds use source checkouts, so no release or local Maven
 publication is required. Check out AutoAuth's `split/authentication-only` and
 AutoLimit's `split/independent-library` branches in sibling directories.
 
-The example excludes AutoAuth's transitive Swagger UI starter. Its existing
-2.8.17 version pulls Boot 3.5 components into the library's Boot 3.2.4 baseline,
-which breaks full application startup with mixed Spring Data versions. The
-example uses the existing 3.2.4 baseline and leaves both libraries' dependency
-versions unchanged. Swagger compatibility remains a separate AutoAuth concern.
+The example excludes AutoAuth's optional transitive Swagger UI starter and uses
+the same Boot 3.5.16 BOM and minimum Tomcat 10.1.61 constraints as AutoLimit. The
+AutoAuth checkout is unchanged; the consuming application's BOM aligns its older
+transitive Spring dependencies. Swagger compatibility is not tested here.
+Boot 3.5 is out of open-source support; continued upstream security maintenance
+requires a supported Boot migration or commercial support.
 
 From the AutoLimit root with Java 21:
 
