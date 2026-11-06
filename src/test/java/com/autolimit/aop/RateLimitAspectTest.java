@@ -33,7 +33,7 @@ class RateLimitAspectTest {
         when(identityResolver.resolve()).thenReturn(Optional.empty());
         when(limiter.check(anyString(), anyInt(), anyLong())).thenReturn(RateLimitDecision.deny());
         AspectJProxyFactory factory = new AspectJProxyFactory(new LimitedService());
-        factory.addAspect(new RateLimitAspect(limiter, identityResolver,
+        factory.addAdvisor(new RateLimitAspect(limiter, identityResolver,
                 new TrustedProxyClientIpResolver(List.of(), 8192, 32)));
         service = factory.getProxy();
     }

@@ -17,6 +17,31 @@ import static org.assertj.core.api.Assertions.*;
 class QuotaIsolationTest {
     private final RateLimitService limiter = new RateLimitService();
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void interfaceMethodAnnotationsAreEnforcedForBothProxyTypes(boolean classProxy) {
+        LimitedApi handler = proxy(new ApiImplementation(), "app", classProxy, "alice");
+        handler.list();
+        assertThatThrownBy(handler::list).isInstanceOf(RateLimitExceededException.class);
+    }
+
+    @Test
+    void annotatedSubclassesLimitInheritedMethodsAndOverridesRetainClassDefaults() {
+        LimitedSubclass inherited = proxy(new LimitedSubclass(), "app", true, "alice");
+        inherited.list();
+        assertThatThrownBy(inherited::list).isInstanceOf(RateLimitExceededException.class);
+        OverridingChild override = proxy(new OverridingChild(), "app", true, "alice");
+        override.list();
+        assertThatThrownBy(override::list).isInstanceOf(RateLimitExceededException.class);
+    }
+
+    public interface LimitedApi { @RateLimit(fallbackRequests = 1) void list(); }
+    public static class ApiImplementation implements LimitedApi { public void list() {} }
+    public static class PlainParent { public void list() {} }
+    @RateLimit(fallbackRequests = 1)
+    public static class LimitedSubclass extends PlainParent {}
+    public static class OverridingChild extends First { @Override public void list() {} }
+
     @Test
     void directCallsAndSelfInvocationBypassAnnotationQuota() {
         First target = new First();
@@ -31,7 +56,7 @@ class QuotaIsolationTest {
     private <T> T proxy(T target, String namespace, boolean classProxy, String user) {
         var factory = new AspectJProxyFactory(target);
         factory.setProxyTargetClass(classProxy);
-        factory.addAspect(new RateLimitAspect(limiter,
+        factory.addAdvisor(new RateLimitAspect(limiter,
                 () -> user == null ? Optional.empty() : Optional.of(new CallerIdentity(user, List.of())),
                 request -> "203.0.113.1", namespace));
         return factory.getProxy();

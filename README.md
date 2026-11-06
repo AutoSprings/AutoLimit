@@ -23,8 +23,17 @@ dependencies { implementation 'com.autolimit:autolimit:1.0.0-SNAPSHOT' }
 
 Spring Boot discovers `AutoLimitAutoConfiguration` from its auto-configuration
 imports metadata. No enable annotation, component scan, or authentication setup
-is needed. The library uses the same Spring Boot 3.2.4 dependency baseline as its
-source project.
+is needed. The library uses the Spring Boot 3.5.16 dependency baseline, with the
+embedded Tomcat modules constrained to at least 10.1.61. Caffeine is managed by
+the Boot BOM. Consuming applications should inspect their resolved dependency
+graph when supplying their own platform or version overrides.
+
+Boot 3.5.16 is the final public Boot 3 release and is no longer under open-source
+support. This baseline updates the previously flagged Spring/Tomcat versions
+while retaining Boot 3 compatibility; it does not promise ongoing security
+maintenance. A supported Boot 4 migration or commercial Boot 3 support is still
+needed for continued upstream fixes. See the
+[Boot release notice](https://spring.io/blog/2026/06/25/spring-boot-3-5-16-available-now/).
 
 ## Standalone usage
 
@@ -51,6 +60,16 @@ The default annotation window is one minute; customize `window` and `unit`
 (`java.util.concurrent.TimeUnit`). Class annotations apply to all intercepted
 methods; method annotations override class defaults. Like other Spring AOP
 features, interception requires calls through the Spring proxy.
+Interface method annotations, inherited class defaults, overridden methods, and
+methods inherited by an annotated subclass are resolved using Spring's annotation
+hierarchy search. Method annotations take precedence over class defaults.
+`RateLimitAspect` retains its bean name/type and constructors but now implements a
+Spring advisor with an annotation-aware method matcher. Manually assembled proxy
+factories must register it with `addAdvisor(...)` rather than `addAspect(...)`.
+Controller interfaces used with JDK proxies must also carry `@Controller` or
+`@RestController`; alternatively use class proxies (Boot's default). AutoLimit
+rejects a quota-advised JDK controller proxy at startup if its controller
+stereotype is hidden, with an actionable error instead of silently losing routes.
 
 Without an identity resolver, all callers use IP quotas. With a resolver,
 authenticated callers use `user:<userId>` and anonymous callers use `ip:<clientIp>`.
@@ -101,6 +120,10 @@ Applications may override `RateLimitService`, `RateLimitAspect`,
 `IpRateLimitFilter` by supplying a bean of that type. To own servlet registration,
 provide a `FilterRegistrationBean<IpRateLimitFilter>` named
 `autoLimitIpFilterRegistration` referencing the application's filter bean.
+When AutoLimit owns registration, `ip-limit-enabled=false` also disables an
+application-provided filter bean by installing a disabled registration, preventing
+Boot's automatic fallback registration. An application-owned registration remains
+the application's responsibility, including whether it is enabled.
 
 ## Authenticated identity
 
@@ -241,8 +264,13 @@ the number of distinct tracked quota keys across both the IP filter and endpoint
 quotas. At capacity, expired keys are reclaimed; if all slots are active, new keys
 are denied (HTTP 429) while existing keys retain their counters and allowances.
 Active quotas are never evicted to admit another identity. Long windows can
-therefore keep new identities blocked until a slot expires. Reclaiming capacity
-may scan all tracked keys, so choose capacity and windows for your traffic.
+therefore keep new identities blocked until a slot expires. A bounded deadline
+index reclaims expired slots without scanning all active keys on every rejection.
+Reclamation stops once a slot is free. Renewed windows can leave stale earlier
+deadlines; these are checked atomically and refreshed without evicting active
+quotas. The index retains at most one record per tracked key. Reclamation can
+process multiple expired or stale records, so choose capacity and windows for
+your traffic; saturation with only future deadlines requires constant work.
 This is a key-count bound, not a byte limit; key lengths also affect memory use.
 
 For direct Java usage, `new RateLimitService()` uses the default capacity and
@@ -278,6 +306,13 @@ global quota. Independently constructed services have independent allowances.
 Redis and token/leaky buckets are not implemented. Application namespaces separate
 keys but do not provide distributed counters. Proxy headers are used only for configured
 `autolimit.trusted-proxies`; by default the socket peer supplies the client IP.
+With Spring's `server.forward-headers-strategy=framework`, AutoLimit unwraps
+servlet request wrappers and uses the original peer and X-Forwarded-For chain,
+so Spring's rewritten address cannot bypass AutoLimit's proxy trust rules.
+Container-native forwarding rewrites the request before servlet filters; use
+`server.forward-headers-strategy=none` or `framework` with the default resolver.
+Native forwarding requires an application-owned `ClientIpResolver` and a verified
+container/proxy trust configuration; AutoLimit cannot restore that original peer.
 AutoLimit contains no revocation store. Token revocation belongs to the
 authentication library and must retain active revocations until token expiry;
 this quota cache and its admission policy are not a revocation mechanism.

@@ -10,6 +10,7 @@ import com.autolimit.ratelimit.RateLimitService;
 import jakarta.servlet.DispatcherType;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -25,6 +26,11 @@ import java.util.Optional;
 @EnableConfigurationProperties(AutoLimitProperties.class)
 @EnableAspectJAutoProxy
 public class AutoLimitAutoConfiguration {
+    @Bean
+    static RateLimitControllerProxyValidator rateLimitControllerProxyValidator() {
+        return new RateLimitControllerProxyValidator();
+    }
+
     @Bean
     @ConditionalOnMissingBean
     public RateLimitService rateLimitService(AutoLimitProperties properties){
@@ -59,18 +65,21 @@ public class AutoLimitAutoConfiguration {
                     rateLimitService, properties.getNamespace());
         }
 
-        @Bean
-        @ConditionalOnMissingBean(name = "autoLimitIpFilterRegistration")
-        FilterRegistrationBean<IpRateLimitFilter> autoLimitIpFilterRegistration(
-                IpRateLimitFilter filter, AutoLimitProperties properties) {
-            FilterRegistrationBean<IpRateLimitFilter> registration = new FilterRegistrationBean<>(filter);
-            registration.setName("autoLimitIpRateLimitFilter");
-            registration.setOrder(properties.getIpFilterOrder());
-            registration.setDispatcherTypes(DispatcherType.REQUEST);
-            registration.setAsyncSupported(true);
-            registration.addUrlPatterns("/*");
-            return registration;
-        }
+    }
+
+    @Bean
+    @ConditionalOnBean(IpRateLimitFilter.class)
+    @ConditionalOnMissingBean(name = "autoLimitIpFilterRegistration")
+    FilterRegistrationBean<IpRateLimitFilter> autoLimitIpFilterRegistration(
+            IpRateLimitFilter filter, AutoLimitProperties properties) {
+        FilterRegistrationBean<IpRateLimitFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setName("autoLimitIpRateLimitFilter");
+        registration.setEnabled(properties.isIpLimitEnabled());
+        registration.setOrder(properties.getIpFilterOrder());
+        registration.setDispatcherTypes(DispatcherType.REQUEST);
+        registration.setAsyncSupported(true);
+        registration.addUrlPatterns("/*");
+        return registration;
     }
 
     @Bean
