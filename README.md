@@ -7,8 +7,8 @@ Security, JWT keys, JJWT, Swagger, or Redis.
 
 ## Install
 
-This branch uses `com.autolimit:autolimit:1.0.0-SNAPSHOT`; it does not publish a
-release. Build and install locally first:
+The configured release coordinates are `io.github.autosprings:autolimit:1.0.0`.
+Until that release is published to Maven Central, build and install locally first:
 
 ```powershell
 .\gradlew.bat build publishToMavenLocal
@@ -18,7 +18,7 @@ Then add it to a Java 21 Spring Boot application:
 
 ```groovy
 repositories { mavenCentral(); mavenLocal() }
-dependencies { implementation 'com.autolimit:autolimit:1.0.0-SNAPSHOT' }
+dependencies { implementation 'io.github.autosprings:autolimit:1.0.0' }
 ```
 
 Spring Boot discovers `AutoLimitAutoConfiguration` from its auto-configuration
