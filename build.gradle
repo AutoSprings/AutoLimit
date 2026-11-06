@@ -1,15 +1,13 @@
 plugins {
     id 'java-library'
-    id 'maven-publish'
+    id 'com.vanniktech.maven.publish' version '0.37.0'
 }
 
-group = 'com.autolimit'
-version = '1.0.0-SNAPSHOT'
+group = 'io.github.autosprings'
+version = '1.0.0'
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(21) }
-    withSourcesJar()
-    withJavadocJar()
 }
 
 repositories { mavenCentral() }
@@ -33,8 +31,34 @@ tasks.named('test') {
     testLogging { events 'failed', 'skipped'; exceptionFormat = 'short' }
 }
 
-publishing {
-    publications {
-        mavenJava(MavenPublication) { from components.java }
+mavenPublishing {
+    coordinates(project.group.toString(), 'autolimit', project.version.toString())
+    publishToMavenCentral()
+    signAllPublications()
+
+    pom {
+        name = 'AutoLimit'
+        description = 'An annotation-based, in-memory rate-limiting library for Java 21 and Spring Boot 4 servlet applications.'
+        url = 'https://github.com/AutoSprings/AutoLimit'
+
+        licenses {
+            license {
+                name = 'The Apache License, Version 2.0'
+                url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                distribution = 'repo'
+            }
+        }
+        developers {
+            developer {
+                id = 'autosprings'
+                name = 'AutoSprings Team'
+                url = 'https://github.com/AutoSprings'
+            }
+        }
+        scm {
+            connection = 'scm:git:https://github.com/AutoSprings/AutoLimit.git'
+            developerConnection = 'scm:git:ssh://git@github.com/AutoSprings/AutoLimit.git'
+            url = 'https://github.com/AutoSprings/AutoLimit'
+        }
     }
 }
