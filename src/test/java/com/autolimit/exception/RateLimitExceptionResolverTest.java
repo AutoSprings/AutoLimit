@@ -10,6 +10,30 @@ import java.util.OptionalLong;
 
 class RateLimitExceptionResolverTest {
     @Test
+    void exceptionSerializationPreservesKnownAndUnknownRetryTiming() throws Exception {
+        for (OptionalLong retry : new OptionalLong[] {OptionalLong.empty(), OptionalLong.of(7)}) {
+            var original = new RateLimitExceededException("exceeded", retry);
+            original.initCause(new IllegalStateException("backend detail"));
+            var bytes = new java.io.ByteArrayOutputStream();
+            try (var output = new java.io.ObjectOutputStream(bytes)) {
+                output.writeObject(original);
+            }
+            RateLimitExceededException restored;
+            try (var input = new java.io.ObjectInputStream(new java.io.ByteArrayInputStream(bytes.toByteArray()))) {
+                restored = (RateLimitExceededException) input.readObject();
+            }
+            assertThat(restored.getMessage()).isEqualTo("exceeded");
+            assertThat(restored.getCause()).isInstanceOf(IllegalStateException.class).hasMessage("backend detail");
+            assertThat(restored.getRetryAfterSeconds()).isEqualTo(retry);
+            var response = new MockHttpServletResponse();
+            new AutoLimitRateLimitExceptionResolver().resolveException(
+                    new MockHttpServletRequest(), response, null, restored);
+            assertThat(response.getStatus()).isEqualTo(429);
+            assertThat(response.getHeader("Retry-After")).isEqualTo(retry.isPresent() ? "7" : null);
+        }
+    }
+
+    @Test
     void handlesQuotaFailureWithJson429() throws Exception {
         var response = new MockHttpServletResponse();
         var result = new AutoLimitRateLimitExceptionResolver().resolveException(
