@@ -5,12 +5,14 @@ libraries. Composite builds use source checkouts, so no release or local Maven
 publication is required. Check out AutoAuth's `split/authentication-only` and
 AutoLimit's `split/independent-library` branches in sibling directories.
 
-The example excludes AutoAuth's optional transitive Swagger UI starter and uses
-the same Boot 3.5.16 BOM and minimum Tomcat 10.1.61 constraints as AutoLimit. The
-AutoAuth checkout is unchanged; the consuming application's BOM aligns its older
-transitive Spring dependencies. Swagger compatibility is not tested here.
-Boot 3.5 is out of open-source support; continued upstream security maintenance
-requires a supported Boot migration or commercial support.
+The example uses the same Boot 4.1.2 BOM as AutoLimit, including Boot-managed
+Tomcat 11 and Jackson 3 for MVC. The AutoAuth checkout is unchanged. This consumer
+substitutes AutoAuth's older Web and AOP starters with Boot 4's Web MVC and AspectJ
+starters and aligns transitive dependencies through its BOM. AutoAuth and its
+JJWT adapter retain Jackson 2 internally alongside Jackson 3; no Jackson 2 MVC
+auto-configuration is enabled. The optional transitive Swagger UI starter is
+excluded; Swagger compatibility and AutoAuth's own Boot 4 migration are outside
+this example's scope.
 
 From the AutoLimit root with Java 21:
 
