@@ -1,7 +1,7 @@
 # AutoLimit
 
 Configure rate limiting on endpoints with annotations for Java and Spring.
-AutoLimit is an independent Java 21 / Spring Boot 3 servlet library. It supplies
+AutoLimit is an independent Java 21 / Spring Boot 4 servlet library. It supplies
 in-memory endpoint quotas and an early IP filter. It needs no AutoAuth, Spring
 Security, JWT keys, JJWT, Swagger, or Redis.
 
@@ -23,17 +23,18 @@ dependencies { implementation 'com.autolimit:autolimit:1.0.0-SNAPSHOT' }
 
 Spring Boot discovers `AutoLimitAutoConfiguration` from its auto-configuration
 imports metadata. No enable annotation, component scan, or authentication setup
-is needed. The library uses the Spring Boot 3.5.16 dependency baseline, with the
-embedded Tomcat modules constrained to at least 10.1.61. Caffeine is managed by
-the Boot BOM. Consuming applications should inspect their resolved dependency
+is needed. The library uses the Spring Boot 4.1.2 dependency baseline, including
+Boot-managed Tomcat 11 and Jackson 3. Caffeine is also managed by the Boot BOM.
+Consuming applications should inspect their resolved dependency
 graph when supplying their own platform or version overrides.
 
-Boot 3.5.16 is the final public Boot 3 release and is no longer under open-source
-support. This baseline updates the previously flagged Spring/Tomcat versions
-while retaining Boot 3 compatibility; it does not promise ongoing security
-maintenance. A supported Boot 4 migration or commercial Boot 3 support is still
-needed for continued upstream fixes. See the
-[Boot release notice](https://spring.io/blog/2026/06/25/spring-boot-3-5-16-available-now/).
+This baseline targets Boot 4 applications and Servlet 6.1 containers. Boot 3 is
+no longer the tested baseline. Java 21 and the included Gradle 9 wrapper satisfy
+Boot 4.1.2's [system requirements](https://docs.spring.io/spring-boot/4.1/system-requirements.html).
+The build uses the Web MVC and AspectJ starters; tests explicitly configure
+`TestRestTemplate` and use Spring Framework's `@MockitoSpyBean` where needed.
+See the [Boot 4 migration guide](https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-4.0-Migration-Guide)
+when upgrading a consuming application.
 
 ## Standalone usage
 

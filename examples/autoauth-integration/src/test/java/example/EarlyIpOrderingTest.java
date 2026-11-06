@@ -7,8 +7,9 @@ import com.autolimit.ratelimit.RateLimitService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.SpyBean;
-import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.http.*;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -18,6 +19,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
+@AutoConfigureTestRestTemplate
 @SpringBootTest(classes = IntegrationApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {"autolimit.pre-auth-rate-limit=1", "autolimit.trusted-proxies[0]=127.0.0.1",
@@ -25,8 +27,8 @@ import static org.mockito.Mockito.*;
 class EarlyIpOrderingTest {
     @Autowired TestRestTemplate http;
     @Autowired JwtGenerator tokens;
-    @SpyBean JwtValidator validator;
-    @SpyBean RateLimitService limiter;
+    @MockitoSpyBean JwtValidator validator;
+    @MockitoSpyBean RateLimitService limiter;
 
     @DynamicPropertySource
     static void keys(DynamicPropertyRegistry properties) throws Exception { IntegrationTest.keys(properties); }

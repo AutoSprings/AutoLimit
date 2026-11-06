@@ -7,21 +7,24 @@ java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 repositories { mavenCentral() }
 application { mainClass = 'example.IntegrationApplication' }
 
-dependencies {
-    constraints {
-        // Patch the embedded container beyond Boot 3.5's final public BOM.
-        implementation 'org.apache.tomcat.embed:tomcat-embed-core:10.1.61'
-        implementation 'org.apache.tomcat.embed:tomcat-embed-el:10.1.61'
-        implementation 'org.apache.tomcat.embed:tomcat-embed-websocket:10.1.61'
+// Adapt the older AutoAuth dependency declarations in this consumer only.
+configurations.configureEach {
+    resolutionStrategy.dependencySubstitution {
+        substitute module('org.springframework.boot:spring-boot-starter-aop') using module('org.springframework.boot:spring-boot-starter-aspectj:4.1.2')
+        substitute module('org.springframework.boot:spring-boot-starter-web') using module('org.springframework.boot:spring-boot-starter-webmvc:4.1.2')
     }
-    implementation platform('org.springframework.boot:spring-boot-dependencies:3.5.16')
+}
+
+dependencies {
+    implementation platform('org.springframework.boot:spring-boot-dependencies:4.1.2')
     implementation('com.autoauth:autoauth:1.0.3-SNAPSHOT') {
-        // The source library's existing Swagger starter selects newer Boot components.
+        // AutoAuth's Swagger 2.x starter targets Boot 3.
         // This consumer demonstrates authentication and quotas without that optional UI.
         exclude group: 'org.springdoc', module: 'springdoc-openapi-starter-webmvc-ui'
     }
     implementation 'com.autolimit:autolimit:1.0.0-SNAPSHOT'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-restclient-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
