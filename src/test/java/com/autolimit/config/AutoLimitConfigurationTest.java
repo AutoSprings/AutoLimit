@@ -53,6 +53,19 @@ class AutoLimitConfigurationTest {
     }
 
     public static final class UnrelatedFinalBean {}
+    @Test
+    void rejectsJdkControllerProxiesThatWouldSilentlyLoseMappings() {
+        runner.withBean(HiddenController.class, HiddenController::new).run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure()).hasStackTraceContaining("spring.aop.proxy-target-class=true");
+        });
+    }
+    public interface HiddenApi { @RateLimit @GetMapping("/hidden") String hidden(); }
+    @RestController
+    public static class HiddenController implements HiddenApi {
+        public String hidden() { return "ok"; }
+    }
+
     @RestController
     public interface LimitedApi {
         @RateLimit(fallbackRequests = 1)

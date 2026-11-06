@@ -66,6 +66,10 @@ hierarchy search. Method annotations take precedence over class defaults.
 `RateLimitAspect` retains its bean name/type and constructors but now implements a
 Spring advisor with an annotation-aware method matcher. Manually assembled proxy
 factories must register it with `addAdvisor(...)` rather than `addAspect(...)`.
+Controller interfaces used with JDK proxies must also carry `@Controller` or
+`@RestController`; alternatively use class proxies (Boot's default). AutoLimit
+rejects a quota-advised JDK controller proxy at startup if its controller
+stereotype is hidden, with an actionable error instead of silently losing routes.
 
 Without an identity resolver, all callers use IP quotas. With a resolver,
 authenticated callers use `user:<userId>` and anonymous callers use `ip:<clientIp>`.

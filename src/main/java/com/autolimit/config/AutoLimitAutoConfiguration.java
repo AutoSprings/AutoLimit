@@ -27,6 +27,11 @@ import java.util.Optional;
 @EnableAspectJAutoProxy
 public class AutoLimitAutoConfiguration {
     @Bean
+    static RateLimitControllerProxyValidator rateLimitControllerProxyValidator() {
+        return new RateLimitControllerProxyValidator();
+    }
+
+    @Bean
     @ConditionalOnMissingBean
     public RateLimitService rateLimitService(AutoLimitProperties properties){
         return new RateLimitService(properties.getMaxTrackedKeys());
