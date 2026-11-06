@@ -318,6 +318,10 @@ AutoLimit contains no revocation store. Token revocation belongs to the
 authentication library and must retain active revocations until token expiry;
 this quota cache and its admission policy are not a revocation mechanism.
 
+## License
+
+AutoLimit is licensed under the [MIT License](LICENSE).
+
 ## Attribution
 
 The annotations, limiter, aspect, IP filter, identity interfaces, exception
